@@ -10,7 +10,7 @@
  */
 import { exec } from 'child_process';
 import { TrapServer } from '@mailts/trap';
-import { MailTs } from 'mailts';
+import { MailTs } from '@mailts/core';
 
 // ── 1. Start the trap ─────────────────────────────────────────────────────────
 const trap = new TrapServer({

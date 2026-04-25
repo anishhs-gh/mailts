@@ -1,5 +1,5 @@
-import { SmtpClient, Logger } from 'mailts';
-import type { SmtpConfig } from 'mailts';
+import { SmtpClient, Logger } from '@mailts/core';
+import type { SmtpConfig } from '@mailts/core';
 import { printHeader, printSuccess, printError, printInfo, prompt } from '../prompt.js';
 
 interface TestArgs {

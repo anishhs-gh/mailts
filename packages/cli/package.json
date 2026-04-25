@@ -27,11 +27,11 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "mailts": ">=0.1.0 <2.0.0"
+    "@mailts/core": ">=0.1.0 <2.0.0"
   },
   "devDependencies": {
+    "@mailts/core": "file:../..",
     "@types/node": "^22.0.0",
-    "mailts": "file:../..",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0"
   },
