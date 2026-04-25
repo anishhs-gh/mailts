@@ -1,9 +1,9 @@
-# mailts
+# @mailts/core
 
 Modern TypeScript mail library — native SMTP/IMAP over Node.js built-ins, zero runtime dependencies.
 
 ```
-npm install mailts
+npm install @mailts/core
 ```
 
 ## Features

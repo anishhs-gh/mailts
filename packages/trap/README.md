@@ -90,7 +90,7 @@ new TrapServer({
 
 ## Peer dependency
 
-Requires `mailts >= 0.1.0` as a peer dependency when used with the `mailts` client. Works with any SMTP client that can be configured to point at `localhost`.
+Requires `@mailts/core >= 0.1.0` as a peer dependency when used with the `@mailts/core` client. Works with any SMTP client that can be configured to point at `localhost`.
 
 
 ---

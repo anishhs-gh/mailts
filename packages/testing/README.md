@@ -8,7 +8,7 @@ Vitest helpers for testing email-sending code with a real in-process SMTP trap â
 npm install --save-dev @mailts/testing
 ```
 
-Requires `vitest` and `mailts` as peer dependencies.
+Requires `vitest` and `@mailts/core` as peer dependencies.
 
 ## Setup
 
@@ -96,7 +96,7 @@ Each test file gets its own trap server instance. The store is isolated per suit
 
 | Package | Version |
 |---------|---------|
-| `mailts` | `>=0.1.0` |
+| `@mailts/core` | `>=0.1.0` |
 | `@mailts/trap` | `>=0.1.0` |
 | `vitest` | `>=1.0.0` |
 
