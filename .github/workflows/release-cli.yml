@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - '@mailts/cli@*'
+  workflow_dispatch:
 
 jobs:
   release:
