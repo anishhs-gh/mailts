@@ -208,7 +208,7 @@ npm run build        # all dist/ artifacts produced cleanly
 
 Additionally verify:
 
-- [ ] No `console.log` left in library code (use the `Logger` from `mailts/logger`)
+- [ ] No `console.log` left in library code (use the `Logger` from `@mailts/core/logger`)
 - [ ] No hardcoded credentials, tokens, or secrets anywhere in source or tests
 - [ ] No `file:` paths added as `dependencies` (only allowed in `devDependencies`)
 - [ ] No new `peerDependencies` added without updating `peerDependenciesMeta`

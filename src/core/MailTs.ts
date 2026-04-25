@@ -39,12 +39,12 @@ export interface MailTsConfig {
   devMode?: boolean;
   /**
    * Pluggable send transport.  When set, takes precedence over `smtp` for all
-   * outbound mail.  Use the built-in transports from `mailts/transports` or
+   * outbound mail.  Use the built-in transports from `@mailts/core/transports` or
    * implement the `Transport` interface yourself.
    *
    * @example
    * ```ts
-   * import { ResendTransport } from 'mailts/transports';
+   * import { ResendTransport } from '@mailts/core/transports';
    * new MailTs({ transport: new ResendTransport({ apiKey: '...' }) });
    * ```
    */
