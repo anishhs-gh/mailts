@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { useTrapServer } from '@mailts/testing';
-import { MailTs } from 'mailts';
+import { MailTs } from '@mailts/core';
 
 // ── Shared trap — started once for the whole suite ───────────────────────────
 const trap = useTrapServer({ smtpPort: 2025, httpPort: 2080 });

@@ -38,17 +38,17 @@
     "@mailts/trap": ">=0.1.0 <2.0.0"
   },
   "peerDependencies": {
-    "mailts": ">=0.1.0 <2.0.0"
+    "@mailts/core": ">=0.1.0 <2.0.0"
   },
   "peerDependenciesMeta": {
-    "mailts": {
+    "@mailts/core": {
       "optional": false
     }
   },
   "devDependencies": {
+    "@mailts/core": "file:../..",
     "@mailts/trap": "file:../trap",
     "@types/node": "^22.0.0",
-    "mailts": "file:../..",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

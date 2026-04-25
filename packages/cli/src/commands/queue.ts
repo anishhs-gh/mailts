@@ -1,5 +1,5 @@
-import { MailTs } from 'mailts';
-import type { SmtpConfig, QueueJob, QueueOptions } from 'mailts';
+import { MailTs } from '@mailts/core';
+import type { SmtpConfig, QueueJob, QueueOptions } from '@mailts/core';
 import { loadGlobalConfig, expandEnvVars } from './configure.js';
 import { printSuccess, printError, printInfo } from '../prompt.js';
 

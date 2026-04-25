@@ -1,5 +1,5 @@
-import { MailTs } from 'mailts';
-import type { ImapConfig } from 'mailts';
+import { MailTs } from '@mailts/core';
+import type { ImapConfig } from '@mailts/core';
 import { loadGlobalConfig, expandEnvVars } from './configure.js';
 import { printError, printInfo } from '../prompt.js';
 
