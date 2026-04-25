@@ -12,7 +12,7 @@ npm install --save-dev @mailts/trap
 
 ```ts
 import { TrapServer } from '@mailts/trap';
-import { MailTs } from 'mailts';
+import { MailTs } from '@mailts/core';
 
 const trap = new TrapServer({
   smtpPort: 1025,  // point your app's SMTP config here

@@ -26,7 +26,7 @@ export default defineConfig({
 
 ```ts
 import { useTrapServer } from '@mailts/testing';
-import { MailTs } from 'mailts';
+import { MailTs } from '@mailts/core';
 
 const { getTrap } = useTrapServer();
 
