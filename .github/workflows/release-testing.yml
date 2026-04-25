@@ -1,0 +1,69 @@
+name: Release @mailts/testing
+
+on:
+  push:
+    tags:
+      - '@mailts/testing@*'
+
+jobs:
+  release:
+    name: Build, Sign & Publish @mailts/testing
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck --workspace=packages/testing
+
+      - name: Test
+        run: npm test --workspace=packages/testing
+
+      - name: Build
+        run: npm run build --workspace=packages/testing
+
+      - name: Verify tag matches package version
+        working-directory: packages/testing
+        run: |
+          PKG_VERSION=$(node -p 'require("./package.json").version')
+          TAG_VERSION="${GITHUB_REF_NAME#@mailts/testing@}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Rewrite file deps to published semver
+        working-directory: packages/testing
+        run: |
+          MV=$(node -p 'require("../../package.json").version')
+          TV=$(node -p 'require("../trap/package.json").version')
+          node -e "const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.devDependencies&&p.devDependencies.mailts&&p.devDependencies.mailts.startsWith('file:'))p.devDependencies.mailts='>=${MV} <2.0.0';if(p.devDependencies&&p.devDependencies['@mailts/trap']&&p.devDependencies['@mailts/trap'].startsWith('file:'))p.devDependencies['@mailts/trap']='>=${TV} <2.0.0';if(p.dependencies&&p.dependencies['@mailts/trap']&&p.dependencies['@mailts/trap'].startsWith('file:'))p.dependencies['@mailts/trap']='>=${TV} <2.0.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm (signed)
+        working-directory: packages/testing
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

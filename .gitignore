@@ -1,0 +1,45 @@
+# Build output
+dist/
+
+# Dependencies
+node_modules/
+
+# Pack artifacts
+*.tgz
+
+# Logs
+*.log
+/tmp/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Trap persistence directory
+.mailts-trap/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Config with secrets (use .mailtsrc.example instead)
+.mailtsrc
+.mailtsrc.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# Coverage
+coverage/
+
+# AI Assistants
+.claude/
+.gemini/
+
+# Misc
+developer-docs/

@@ -1,0 +1,69 @@
+{
+  "name": "@mailts/trap",
+  "version": "0.1.0",
+  "description": "Local SMTP mail trap with web preview UI — zero-signup Ethereal replacement",
+  "license": "MIT",
+  "author": {
+    "name": "Anish Shekh",
+    "email": "anishsh701@gmail.com",
+    "url": "https://github.com/anishhs-gh"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "mailts-trap": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run test"
+  },
+  "peerDependencies": {
+    "mailts": ">=0.1.0 <2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "mailts": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "mailts": "file:../..",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "mailts",
+    "email",
+    "smtp",
+    "trap",
+    "preview",
+    "development",
+    "ethereal"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anishhs-gh/mailts",
+    "directory": "packages/trap"
+  }
+}

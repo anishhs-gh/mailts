@@ -1,0 +1,68 @@
+name: Release @mailts/trap
+
+on:
+  push:
+    tags:
+      - '@mailts/trap@*'
+
+jobs:
+  release:
+    name: Build, Sign & Publish @mailts/trap
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck --workspace=packages/trap
+
+      - name: Test
+        run: npm test --workspace=packages/trap
+
+      - name: Build
+        run: npm run build --workspace=packages/trap
+
+      - name: Verify tag matches package version
+        working-directory: packages/trap
+        run: |
+          PKG_VERSION=$(node -p 'require("./package.json").version')
+          TAG_VERSION="${GITHUB_REF_NAME#@mailts/trap@}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Rewrite file deps to published semver
+        working-directory: packages/trap
+        run: |
+          MV=$(node -p 'require("../../package.json").version')
+          node -e "const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.devDependencies&&p.devDependencies.mailts&&p.devDependencies.mailts.startsWith('file:'))p.devDependencies.mailts='>=${MV} <2.0.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm (signed)
+        working-directory: packages/trap
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

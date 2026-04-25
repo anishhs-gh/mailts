@@ -1,0 +1,57 @@
+{
+  "smtp": {
+    "host": "smtp.gmail.com",
+    "port": 587,
+    "secure": false,
+    "auth": {
+      "type": "plain",
+      "user": "you@gmail.com",
+      "pass": "${SMTP_PASS}"
+    },
+    "pool": {
+      "maxConnections": 5,
+      "maxMessages": 100,
+      "idleTimeout": 60000
+    }
+  },
+  "imap": {
+    "host": "imap.gmail.com",
+    "port": 993,
+    "secure": true,
+    "auth": {
+      "type": "plain",
+      "user": "you@gmail.com",
+      "pass": "${IMAP_PASS}"
+    }
+  },
+  "queue": {
+    "concurrency": 3,
+    "maxRetries": 5,
+    "retryDelay": 1000,
+    "retryBackoff": "exponential",
+    "jitter": true,
+    "deadLetter": {
+      "enabled": true
+    }
+  },
+  "logger": {
+    "level": "info",
+    "format": "pretty",
+    "protocol": false
+  },
+  "devMode": false,
+  "aliases": {
+    "welcome": {
+      "from": "no-reply@example.com",
+      "fromName": "Example Team",
+      "subject": "Welcome to Example",
+      "template": "./templates/welcome.html"
+    },
+    "system-alert": {
+      "type": "alert",
+      "from": "monitoring@example.com",
+      "to": "admin@example.com",
+      "subject": "System Alert"
+    }
+  }
+}

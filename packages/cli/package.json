@@ -1,0 +1,50 @@
+{
+  "name": "@mailts/cli",
+  "version": "0.1.0",
+  "description": "Command-line interface for mailts — configure, test, send, read, queue",
+  "license": "MIT",
+  "author": {
+    "name": "Anish Shekh",
+    "email": "anishsh701@gmail.com",
+    "url": "https://github.com/anishhs-gh"
+  },
+  "type": "module",
+  "bin": {
+    "mailts": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "mailts": ">=0.1.0 <2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "mailts": "file:../..",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "mailts",
+    "cli",
+    "email",
+    "smtp",
+    "imap"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anishhs-gh/mailts",
+    "directory": "packages/cli"
+  }
+}

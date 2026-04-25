@@ -1,0 +1,93 @@
+{
+  "name": "mailts",
+  "version": "0.1.0",
+  "description": "Modern native TypeScript SMTP/IMAP library — zero legacy deps, built to replace nodemailer",
+  "license": "MIT",
+  "author": {
+    "name": "Anish Shekh",
+    "email": "anishsh701@gmail.com",
+    "url": "https://github.com/anishhs-gh"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./smtp": {
+      "types": "./dist/smtp/index.d.ts",
+      "import": "./dist/smtp/index.js",
+      "require": "./dist/smtp/index.cjs"
+    },
+    "./imap": {
+      "types": "./dist/imap/index.d.ts",
+      "import": "./dist/imap/index.js",
+      "require": "./dist/imap/index.cjs"
+    },
+    "./queue": {
+      "types": "./dist/queue/index.d.ts",
+      "import": "./dist/queue/index.js",
+      "require": "./dist/queue/index.cjs"
+    },
+    "./logger": {
+      "types": "./dist/logger/index.d.ts",
+      "import": "./dist/logger/index.js",
+      "require": "./dist/logger/index.cjs"
+    },
+    "./transports": {
+      "types": "./dist/transports/index.d.ts",
+      "import": "./dist/transports/index.js",
+      "require": "./dist/transports/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsup && npm run build --workspaces --if-present",
+    "build:core": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run && npm run test --workspaces --if-present",
+    "test:core": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit && npm run typecheck --workspaces --if-present",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build:core && npm run test:core"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "keywords": [
+    "email",
+    "smtp",
+    "imap",
+    "mail",
+    "typescript",
+    "native",
+    "nodemailer",
+    "mailts",
+    "queue",
+    "streaming"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anishhs-gh/mailts"
+  }
+}
