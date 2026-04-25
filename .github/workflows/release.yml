@@ -30,7 +30,7 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npm run typecheck --workspace=.
+        run: npm run typecheck
 
       - name: Test
         run: npm run test:core
@@ -39,6 +39,7 @@ jobs:
         run: npm run build:core
 
       - name: Verify tag matches package version
+        if: github.event_name == 'push'
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           TAG_VERSION="${GITHUB_REF_NAME#mailts@}"
@@ -48,6 +49,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}

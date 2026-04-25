@@ -39,6 +39,7 @@ jobs:
         run: npm run build --workspace=packages/trap
 
       - name: Verify tag matches package version
+        if: github.event_name == 'push'
         working-directory: packages/trap
         run: |
           PKG_VERSION=$(node -p 'require("./package.json").version')
@@ -55,6 +56,7 @@ jobs:
           node -e "const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.devDependencies&&p.devDependencies.mailts&&p.devDependencies.mailts.startsWith('file:'))p.devDependencies.mailts='>=${MV} <2.0.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
 
       - name: Create GitHub Release
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
