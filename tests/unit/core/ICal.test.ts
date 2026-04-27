@@ -163,10 +163,16 @@ describe('buildICalString', () => {
   });
 
   it('handles timezone parameter', () => {
-    const cal = buildICalString({ ...BASE_EVENT, timezone: 'America/New_York' });
+    // Use local constructor so wall-clock hour is always 10 regardless of machine TZ.
+    // The TZID stamps that wall-clock value as "10am New_York time"; calendar clients
+    // then show recipients the equivalent in their own timezone.
+    const start = new Date(2024, 5, 1, 10, 0, 0);
+    const end   = new Date(2024, 5, 1, 11, 0, 0);
+    const cal = buildICalString({ ...BASE_EVENT, start, end, timezone: 'America/New_York' });
     expect(cal).toContain('TZID=America/New_York');
-    // 2024-06-01T14:00:00Z → EDT (UTC-4) → 10:00:00 local
     expect(cal).toContain('DTSTART;TZID=America/New_York:20240601T100000');
     expect(cal).toContain('DTEND;TZID=America/New_York:20240601T110000');
+    // No trailing Z — wall-clock local time, not UTC
+    expect(cal).not.toMatch(/DTSTART;TZID=.*Z/);
   });
 });
