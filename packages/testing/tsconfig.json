@@ -4,12 +4,12 @@
     "outDir": "./dist",
     "baseUrl": ".",
     "paths": {
-      "mailts": ["../../src/index.ts"],
-      "mailts/smtp": ["../../src/smtp/index.ts"],
-      "mailts/imap": ["../../src/imap/index.ts"],
-      "mailts/queue": ["../../src/queue/index.ts"],
-      "mailts/logger": ["../../src/logger/index.ts"],
-      "mailts/transports": ["../../src/transports/index.ts"],
+      "@mailts/core": ["../../src/index.ts"],
+      "@mailts/core/smtp": ["../../src/smtp/index.ts"],
+      "@mailts/core/imap": ["../../src/imap/index.ts"],
+      "@mailts/core/queue": ["../../src/queue/index.ts"],
+      "@mailts/core/logger": ["../../src/logger/index.ts"],
+      "@mailts/core/transports": ["../../src/transports/index.ts"],
       "@mailts/trap": ["../trap/src/index.ts"]
     }
   },

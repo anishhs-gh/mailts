@@ -1,6 +1,6 @@
 # @mailts/cli
 
-Command-line interface for `mailts` — configure, test connections, send mail, read your inbox, and manage the send queue from the terminal.
+Command-line interface for `@mailts/core` — configure, test connections, send mail, read your inbox, and manage the send queue from the terminal.
 
 ## Install
 
@@ -143,7 +143,7 @@ mailts queue dlq retry <job-id>
 
 ## Peer dependency
 
-Requires `mailts >= 0.1.0`.
+Requires `@mailts/core >= 0.1.0`.
 
 ---
 

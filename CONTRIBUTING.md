@@ -25,7 +25,7 @@ Complete guide for contributors and maintainers — from first clone through pub
 ## 1. Repository Layout
 
 ```
-mailts/                        ← root package (npm: mailts)
+mailts/                        ← root package (npm: @mailts/core)
 ├── src/                       ← core SMTP/IMAP library source
 ├── tests/                     ← root unit tests (vitest)
 ├── packages/
@@ -41,12 +41,12 @@ mailts/                        ← root package (npm: mailts)
 **Publish dependency order:**
 
 ```
-mailts  →  @mailts/trap   →  @mailts/testing
+@mailts/core  →  @mailts/trap   →  @mailts/testing
        →  @mailts/cli
 ```
 
-`@mailts/trap` and `@mailts/cli` can be published in parallel after `mailts`.  
-`@mailts/testing` depends on both `mailts` (peer) and `@mailts/trap` (dependency), so it ships last.
+`@mailts/trap` and `@mailts/cli` can be published in parallel after `@mailts/core`.  
+`@mailts/testing` depends on both `@mailts/core` (peer) and `@mailts/trap` (dependency), so it ships last.
 
 ---
 
@@ -86,7 +86,7 @@ All three must pass cleanly before you start working.
 
 ## 4. Development Workflow
 
-### Working on the root `mailts` package
+### Working on the root `@mailts/core` package
 
 ```bash
 # Watch mode — rebuilds on save
@@ -114,7 +114,7 @@ Each workspace `package.json` has `file:` references in `devDependencies`:
 
 ```json
 "devDependencies": {
-  "mailts": "file:../..",
+  "@mailts/core": "file:../..",
   "@mailts/trap": "file:../trap"
 }
 ```
@@ -208,7 +208,7 @@ npm run build        # all dist/ artifacts produced cleanly
 
 Additionally verify:
 
-- [ ] No `console.log` left in library code (use the `Logger` from `mailts/logger`)
+- [ ] No `console.log` left in library code (use the `Logger` from `@mailts/core/logger`)
 - [ ] No hardcoded credentials, tokens, or secrets anywhere in source or tests
 - [ ] No `file:` paths added as `dependencies` (only allowed in `devDependencies`)
 - [ ] No new `peerDependencies` added without updating `peerDependenciesMeta`
@@ -290,10 +290,10 @@ Version bumps are **manual** — edit `package.json` in the PR that introduces t
 
 ### Cross-package version coupling
 
-- `@mailts/cli` and `@mailts/trap` declare `mailts` as a `peerDependency` with range `>=X.Y.0 <(X+1).0.0`.
-- `@mailts/testing` declares both `mailts` and `@mailts/trap` as peers with the same pattern.
-- When `mailts` ships a **minor** with new API that `@mailts/cli` depends on, widen the peer range floor: `>=0.2.0 <2.0.0`. Bump `@mailts/cli` minor too.
-- When `mailts` ships a **major**, all packages must release a new major that widens the peer upper bound.
+- `@mailts/cli` and `@mailts/trap` declare `@mailts/core` as a `peerDependency` with range `>=X.Y.0 <(X+1).0.0`.
+- `@mailts/testing` declares both `@mailts/core` and `@mailts/trap` as peers with the same pattern.
+- When `@mailts/core` ships a **minor** with new API that `@mailts/cli` depends on, widen the peer range floor: `>=0.2.0 <2.0.0`. Bump `@mailts/cli` minor too.
+- When `@mailts/core` ships a **major**, all packages must release a new major that widens the peer upper bound.
 
 ---
 
@@ -304,7 +304,7 @@ Publishing is **always triggered by a Git tag**, never by a CI commit. There is 
 ### One-time setup (per repository)
 
 1. Add `NPM_TOKEN` to repository secrets (Settings → Secrets → Actions).  
-   The token must have `Automation` scope and publish access to the `mailts` npm org.
+   The token must have `Automation` scope and publish access to the `@mailts` npm org.
 2. Ensure the repository has **Actions permissions** to create releases (`Settings → Actions → Workflow permissions → Read and write`).
 
 ### Release workflow per package
@@ -313,7 +313,7 @@ Each package has its own workflow file triggered by a specific tag pattern:
 
 | Package | Workflow file | Tag pattern | Example tag |
 |---|---|---|---|
-| `mailts` | `release.yml` | `mailts@*` | `mailts@1.2.0` |
+| `@mailts/core` | `release.yml` | `@mailts/core@*` | `@mailts/core@1.2.0` |
 | `@mailts/trap` | `release-trap.yml` | `@mailts/trap@*` | `@mailts/trap@1.0.1` |
 | `@mailts/cli` | `release-cli.yml` | `@mailts/cli@*` | `@mailts/cli@1.0.1` |
 | `@mailts/testing` | `release-testing.yml` | `@mailts/testing@*` | `@mailts/testing@1.0.1` |
@@ -325,7 +325,7 @@ Each package has its own workflow file triggered by a specific tag pattern:
 Edit `package.json` of the target package, commit, and merge to `main`:
 
 ```bash
-# Example: releasing mailts 1.2.0
+# Example: releasing @mailts/core 1.2.0
 # Edit package.json: "version": "1.2.0"
 git add package.json
 git commit -m "chore(core): bump version to 1.2.0"
@@ -337,8 +337,8 @@ Wait for CI to pass on `main` before tagging.
 **Step 2 — push the tag**
 
 ```bash
-git tag mailts@1.2.0
-git push origin mailts@1.2.0
+git tag '@mailts/core@1.2.0'
+git push origin '@mailts/core@1.2.0'
 ```
 
 This triggers `release.yml`. The workflow will:
@@ -351,7 +351,7 @@ This triggers `release.yml`. The workflow will:
 
 **Step 3 — verify the publish**
 
-Check `https://www.npmjs.com/package/mailts` and confirm:
+Check `https://www.npmjs.com/package/@mailts/core` and confirm:
 - Version appears under "Versions"
 - Provenance badge is shown (the shield icon) — this means the release was signed
 
@@ -359,8 +359,8 @@ Check `https://www.npmjs.com/package/mailts` and confirm:
 
 Follow the **same steps** but use the package-specific tag. In addition:
 
-- For `@mailts/trap` and `@mailts/cli`: `mailts` must already be published at the version declared in their `peerDependencies` range.
-- For `@mailts/testing`: both `mailts` and `@mailts/trap` must already be published.
+- For `@mailts/trap` and `@mailts/cli`: `@mailts/core` must already be published at the version declared in their `peerDependencies` range.
+- For `@mailts/testing`: both `@mailts/core` and `@mailts/trap` must already be published.
 
 ```bash
 # Publishing @mailts/trap 1.0.1 after mailts 1.0.0 is already on npm
@@ -376,18 +376,18 @@ Each workflow contains:
 
 ```bash
 PKG_VERSION=$(node -p "require('./package.json').version")
-TAG_VERSION="${GITHUB_REF_NAME#mailts@}"
+TAG_VERSION="${GITHUB_REF_NAME#@mailts/core@}"
 if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then exit 1; fi
 ```
 
-If the tag is `mailts@1.2.0` but `package.json` says `1.1.0`, the workflow fails immediately. This prevents publishing the wrong version. Fix: update `package.json`, merge, re-tag.
+If the tag is `@mailts/core@1.2.0` but `package.json` says `1.1.0`, the workflow fails immediately. This prevents publishing the wrong version. Fix: update `package.json`, merge, re-tag.
 
 ### Rollback / yanking a release
 
 npm does not support deleting published versions. To deprecate a bad release:
 
 ```bash
-npm deprecate mailts@1.2.0 "critical bug — use 1.2.1"
+npm deprecate @mailts/core@1.2.0 "critical bug — use 1.2.1"
 ```
 
 Then publish a patch fix immediately.
@@ -396,35 +396,35 @@ Then publish a patch fix immediately.
 
 - Do not run `npm publish` locally — always let GitHub Actions publish. Local publishes lose provenance signing.
 - Do not tag before the version bump is merged to `main` — the workflow checks out `main`'s code.
-- Do not force-push tags. If a tag was pushed in error, delete it (`git push --delete origin mailts@1.2.0`) and re-tag after fixing.
+- Do not force-push tags. If a tag was pushed in error, delete it (`git push --delete origin '@mailts/core@1.2.0'`) and re-tag after fixing.
 - Do not amend commits that have already been tagged.
 
 ---
 
 ## 12. Dependency Rules
 
-### Root `mailts` package
+### Root `@mailts/core` package
 
 - **No runtime `dependencies`.** Everything is in `devDependencies`. The library uses only Node.js built-ins at runtime.
 - Built-in modules used: `tls`, `net`, `crypto`, `stream`, `buffer`, `dns`, `fs`, `path`, `http`, `events`.
 
 ### `@mailts/trap`
 
-- `peerDependencies`: `mailts >=0.1.0 <2.0.0` (required, not optional)
-- `devDependencies` (local dev only): `mailts: file:../..`
-- No other runtime dependencies — uses only Node built-ins beyond `mailts`
+- `peerDependencies`: `@mailts/core >=0.1.0 <2.0.0` (required, not optional)
+- `devDependencies` (local dev only): `@mailts/core: file:../..`
+- No other runtime dependencies — uses only Node built-ins beyond `@mailts/core`
 
 ### `@mailts/cli`
 
-- `peerDependencies`: `mailts >=0.1.0 <2.0.0` (required)
-- `devDependencies` (local dev only): `mailts: file:../..`
+- `peerDependencies`: `@mailts/core >=0.1.0 <2.0.0` (required)
+- `devDependencies` (local dev only): `@mailts/core: file:../..`
 - No bundled `dependencies`
 
 ### `@mailts/testing`
 
 - `dependencies`: `@mailts/trap >=0.1.0 <2.0.0` (bundled runtime dep — users install this for test helpers)
-- `peerDependencies`: `mailts >=0.1.0 <2.0.0` (required)
-- `devDependencies` (local dev only): `mailts: file:../..`, `@mailts/trap: file:../trap`
+- `peerDependencies`: `@mailts/core >=0.1.0 <2.0.0` (required)
+- `devDependencies` (local dev only): `@mailts/core: file:../..`, `@mailts/trap: file:../trap`
 
 ### General rules
 
@@ -442,7 +442,7 @@ Then publish a patch fix immediately.
 - **No `eval`, `Function()`, or dynamic `require()`** with user-controlled input.
 - Run `npm audit --audit-level=high` before every PR merge. CI enforces this — a high-severity audit failure blocks merge.
 - If a vulnerability is found in a dependency that cannot be patched immediately, open a security issue and add a `npm audit` exemption comment explaining the risk and timeline.
-- For security vulnerabilities in `mailts` itself: do not open a public issue. Email `anishsh701@gmail.com` directly with details.
+- For security vulnerabilities in `@mailts/core` itself: do not open a public issue. Email `anishsh701@gmail.com` directly with details.
 
 ---
 
@@ -459,9 +459,9 @@ npm run dev --workspace=packages/trap   # watch a package
 # Validate before push
 npm run typecheck && npm test && npm run build
 
-# Release (example: mailts 1.2.0)
+# Release (example: @mailts/core 1.2.0)
 # 1. Edit package.json version → commit → merge to main
-# 2. git tag mailts@1.2.0 && git push origin mailts@1.2.0
+# 2. git tag '@mailts/core@1.2.0' && git push origin '@mailts/core@1.2.0'
 # 3. Watch https://github.com/anishhs-gh/mailts/actions
-# 4. Verify on npmjs.com/package/mailts
+# 4. Verify on npmjs.com/package/@mailts/core
 ```

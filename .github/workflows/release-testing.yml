@@ -54,13 +54,23 @@ jobs:
         run: |
           MV=$(node -p 'require("../../package.json").version')
           TV=$(node -p 'require("../trap/package.json").version')
-          node -e "const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.devDependencies&&p.devDependencies.mailts&&p.devDependencies.mailts.startsWith('file:'))p.devDependencies.mailts='>=${MV} <2.0.0';if(p.devDependencies&&p.devDependencies['@mailts/trap']&&p.devDependencies['@mailts/trap'].startsWith('file:'))p.devDependencies['@mailts/trap']='>=${TV} <2.0.0';if(p.dependencies&&p.dependencies['@mailts/trap']&&p.dependencies['@mailts/trap'].startsWith('file:'))p.dependencies['@mailts/trap']='>=${TV} <2.0.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          node -e "const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.devDependencies&&p.devDependencies['@mailts/core']&&p.devDependencies['@mailts/core'].startsWith('file:'))p.devDependencies['@mailts/core']='>=${MV} <2.0.0';if(p.devDependencies&&p.devDependencies['@mailts/trap']&&p.devDependencies['@mailts/trap'].startsWith('file:'))p.devDependencies['@mailts/trap']='>=${TV} <2.0.0';if(p.dependencies&&p.dependencies['@mailts/trap']&&p.dependencies['@mailts/trap'].startsWith('file:'))p.dependencies['@mailts/trap']='>=${TV} <2.0.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+
+      - name: Determine release tag
+        id: release_tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "value=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(node -p "require('./packages/testing/package.json').version")
+            echo "value=@mailts/testing@${VERSION}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create GitHub Release
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.release_tag.outputs.value }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

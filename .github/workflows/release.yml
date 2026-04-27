@@ -1,14 +1,14 @@
-name: Release mailts
+name: Release @mailts/core
 
 on:
   push:
     tags:
-      - 'mailts@*'
+      - '@mailts/core@*'
   workflow_dispatch:
 
 jobs:
   release:
-    name: Build, Sign & Publish mailts
+    name: Build, Sign & Publish @mailts/core
     runs-on: ubuntu-latest
 
     permissions:
@@ -42,17 +42,27 @@ jobs:
         if: github.event_name == 'push'
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${GITHUB_REF_NAME#mailts@}"
+          TAG_VERSION="${GITHUB_REF_NAME#@mailts/core@}"
           if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
             echo "Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
             exit 1
+          fi
+
+      - name: Determine release tag
+        id: release_tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "value=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            echo "value=@mailts/core@${VERSION}" >> $GITHUB_OUTPUT
           fi
 
       - name: Create GitHub Release
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ steps.release_tag.outputs.value }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

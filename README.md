@@ -1,9 +1,9 @@
-# mailts
+# @mailts/core
 
 Modern TypeScript mail library — native SMTP/IMAP over Node.js built-ins, zero runtime dependencies.
 
 ```
-npm install mailts
+npm install @mailts/core
 ```
 
 ## Features
@@ -27,7 +27,7 @@ npm install mailts
 ## Quick start
 
 ```ts
-import { MailTs } from 'mailts';
+import { MailTs } from '@mailts/core';
 
 const mail = new MailTs({
   smtp: {
@@ -212,7 +212,7 @@ if (result.ok) {
 For API-based delivery services, use a transport instead of SMTP:
 
 ```ts
-import { ResendTransport } from 'mailts/transports';
+import { ResendTransport } from '@mailts/core/transports';
 
 const mail = new MailTs({
   transport: new ResendTransport({ apiKey: process.env.RESEND_API_KEY }),
@@ -253,7 +253,7 @@ await mail.send({ ... });
 Or sign a raw buffer directly:
 
 ```ts
-import { signDkim } from 'mailts';
+import { signDkim } from '@mailts/core';
 
 const signed = signDkim(rawBuffer, {
   domainName: 'example.com',
@@ -555,7 +555,7 @@ const mail = new MailTs({
 All errors extend `MailTsError` and carry `.code` and `.retryable`:
 
 ```ts
-import { SmtpAuthError, SmtpRejectError, SmtpConnError, ImapError } from 'mailts';
+import { SmtpAuthError, SmtpRejectError, SmtpConnError, ImapError } from '@mailts/core';
 
 try {
   await mail.send({ ... });
@@ -602,7 +602,7 @@ await mail.send({ ... });
 
 ```ts
 import { TrapServer } from '@mailts/trap';
-import { MailTs } from 'mailts';
+import { MailTs } from '@mailts/core';
 
 const trap = new TrapServer({ smtpPort: 1025, httpPort: 1080 });
 await trap.start();
@@ -616,7 +616,7 @@ await mail.send({ from: 'app@example.com', to: 'dev@example.com', subject: 'Test
 
 ```ts
 import { useTrapServer } from '@mailts/testing';
-import { MailTs } from 'mailts';
+import { MailTs } from '@mailts/core';
 
 const { getTrap } = useTrapServer();
 

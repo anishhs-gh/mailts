@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'fs';
-import { MailTs } from 'mailts';
-import type { SmtpConfig, EmailOptions } from 'mailts';
+import { MailTs } from '@mailts/core';
+import type { SmtpConfig, EmailOptions } from '@mailts/core';
 import { loadGlobalConfig, expandEnvVars } from './configure.js';
 import { printSuccess, printError, printInfo } from '../prompt.js';
 
