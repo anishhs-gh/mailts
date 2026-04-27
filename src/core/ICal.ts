@@ -20,9 +20,11 @@ export interface ICalEvent {
   description?: string;
   /** Optional location string. */
   location?: string;
-  /** Event start time (UTC). */
+  /** Event start time. Construct with `new Date(year, month, day, h, m, s)` so the
+   *  wall-clock value matches the `timezone` you specify. Leave `timezone` unset to
+   *  emit a UTC timestamp (`DTSTART:...Z`) instead. */
   start: Date;
-  /** Event end time (UTC). */
+  /** Event end time. Same timezone convention as `start`. */
   end: Date;
   /** Organizer — name and email. */
   organizer: { name: string; email: string };
@@ -90,7 +92,9 @@ function formatDate(d: Date, tz: string): string {
   if (tz === 'UTC') {
     return d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   }
-  // Local time without Z suffix (tz handled via TZID param)
+  // Wall-clock semantics: the Date's local values ARE the intended time in the specified timezone.
+  // Use local accessors so that new Date(year, month, day, hour, ...) always round-trips correctly
+  // regardless of the machine's system timezone.
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
     `T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
