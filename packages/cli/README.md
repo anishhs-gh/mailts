@@ -139,11 +139,18 @@ mailts read --unseen --limit 5
 # Inspect and retry dead-letter jobs
 mailts queue dlq list --json
 mailts queue dlq retry <job-id>
+
+# Start a local SMTP trap (requires @mailts/trap)
+mailts trap
+mailts trap --smtp-port 2525 --http-port 8080 --no-open
 ```
 
-## Peer dependency
+## Peer dependencies
 
-Requires `@mailts/core >= 0.1.0`.
+| Package | Version | Required |
+|---------|---------|----------|
+| `@mailts/core` | `>=0.1.0` | Yes |
+| `@mailts/trap` | `>=0.1.0` | No — only needed for `mailts trap` |
 
 ---
 

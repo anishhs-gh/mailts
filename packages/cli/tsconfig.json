@@ -9,7 +9,8 @@
       "@mailts/core/imap": ["../../src/imap/index.ts"],
       "@mailts/core/queue": ["../../src/queue/index.ts"],
       "@mailts/core/logger": ["../../src/logger/index.ts"],
-      "@mailts/core/transports": ["../../src/transports/index.ts"]
+      "@mailts/core/transports": ["../../src/transports/index.ts"],
+      "@mailts/trap": ["../trap/src/index.ts"]
     }
   },
   "include": ["src/**/*"],
