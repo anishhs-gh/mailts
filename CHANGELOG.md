@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [@mailts/core@0.1.1] / [@mailts/cli@0.1.1] — 2026-04-27
+
+### Added
+- `@mailts/cli`: `mailts trap` command — starts a local SMTP trap server (delegates to `@mailts/trap`, optional peer dependency).
+
+### Fixed
+- `@mailts/core`: iCal `timezone` field now uses wall-clock semantics — the `Date`'s local values are stamped with the specified TZID. Previously, a UTC-to-timezone conversion could shift the wall-clock time when the server ran in a different timezone than the one specified. Recipients in other timezones continue to see the correct local equivalent via their calendar client.
+
 ### Added
 - Initial release of `mailts` — native TypeScript SMTP/IMAP library, zero runtime dependencies.
 - SMTP client with TLS, STARTTLS, PLAIN/LOGIN/XOAUTH2 auth, SOCKS5 and HTTP CONNECT proxy.

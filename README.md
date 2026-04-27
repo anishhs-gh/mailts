@@ -157,8 +157,11 @@ await mail.send({
   text: 'You have been invited.',
   ical: {
     summary: 'Team Sync',
-    start: new Date('2024-06-01T14:00:00Z'),
-    end: new Date('2024-06-01T15:00:00Z'),
+    // Use local Date constructor — the wall-clock values are treated as the specified timezone.
+    // Recipients in other timezones automatically see the equivalent local time.
+    start: new Date(2024, 5, 1, 14, 0, 0),  // 2:00 PM
+    end:   new Date(2024, 5, 1, 15, 0, 0),  // 3:00 PM
+    timezone: 'America/New_York',            // or Intl.DateTimeFormat().resolvedOptions().timeZone
     organizer: { name: 'Alice', email: 'alice@example.com' },
     attendees: [
       { email: 'bob@example.com', name: 'Bob', rsvp: true },
@@ -166,7 +169,6 @@ await mail.send({
     location: 'Conference Room A',
     description: 'Weekly sync',
     method: 'REQUEST',    // REQUEST | CANCEL | REPLY | COUNTER
-    timezone: 'America/New_York',
   },
 });
 ```
