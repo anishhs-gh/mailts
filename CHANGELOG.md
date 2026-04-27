@@ -3,8 +3,6 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
-## [Unreleased]
-
 ## [0.1.1] — 2026-04-27
 
 ### Fixed
