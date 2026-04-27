@@ -90,10 +90,15 @@ function formatDate(d: Date, tz: string): string {
   if (tz === 'UTC') {
     return d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   }
-  // Local time without Z suffix (tz handled via TZID param)
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
-    `T${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  // Convert to the target IANA timezone, not the machine's local timezone
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(d);
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00';
+  return `${get('year')}${get('month')}${get('day')}T${get('hour')}${get('minute')}${get('second')}`;
 }
 
 function escapeIcal(s: string): string {

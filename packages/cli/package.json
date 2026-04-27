@@ -27,10 +27,15 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@mailts/core": ">=0.1.0 <2.0.0"
+    "@mailts/core": ">=0.1.0 <2.0.0",
+    "@mailts/trap": ">=0.1.0 <2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@mailts/trap": { "optional": true }
   },
   "devDependencies": {
     "@mailts/core": "file:../..",
+    "@mailts/trap": "file:../trap",
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.0"

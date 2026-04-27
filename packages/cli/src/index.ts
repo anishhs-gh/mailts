@@ -4,6 +4,7 @@ import { sendEmail } from './commands/send.js';
 import { readMail } from './commands/read.js';
 import { configureSMTP } from './commands/configure.js';
 import { queueCommand } from './commands/queue.js';
+import { trapCommand } from './commands/trap.js';
 import { printError } from './prompt.js';
 
 const VERSION = '0.1.0';
@@ -20,6 +21,7 @@ COMMANDS
   send [options]                Send an email
   read [options]                Read emails via IMAP
   queue <subcommand>            Manage the send queue
+  trap [options]                Start a local SMTP trap server (requires @mailts/trap)
   version                       Print version and exit
 
 TEST OPTIONS
@@ -49,6 +51,14 @@ QUEUE SUBCOMMANDS
   queue drain                   Wait until all enqueued jobs finish
   queue dlq list [--json]       List jobs in the dead-letter queue
   queue dlq retry <job-id>      Re-enqueue a dead-letter job
+
+TRAP OPTIONS
+  --smtp-port <port>            SMTP listen port  (default: 1025)
+  --http-port <port>            HTTP/UI listen port  (default: 1080)
+  --host <host>                 Bind address  (default: 127.0.0.1)
+  --max-messages <n>            In-memory message cap  (default: 100)
+  --no-open                     Don't auto-open browser
+  --quiet                       Suppress startup output
 
 ENVIRONMENT
   MAILTS_PASSWORD               SMTP password for 'mailts test'
@@ -174,6 +184,10 @@ async function main(): Promise<void> {
         }
         break;
       }
+
+      case 'trap':
+        await trapCommand(rest);
+        break;
 
       default:
         printError(`Unknown command: "${command}"`);

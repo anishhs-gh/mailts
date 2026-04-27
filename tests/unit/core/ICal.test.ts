@@ -165,7 +165,8 @@ describe('buildICalString', () => {
   it('handles timezone parameter', () => {
     const cal = buildICalString({ ...BASE_EVENT, timezone: 'America/New_York' });
     expect(cal).toContain('TZID=America/New_York');
-    // Local time (no trailing Z)
-    expect(cal).toMatch(/DTSTART;TZID=America\/New_York:\d{8}T\d{6}$/m);
+    // 2024-06-01T14:00:00Z → EDT (UTC-4) → 10:00:00 local
+    expect(cal).toContain('DTSTART;TZID=America/New_York:20240601T100000');
+    expect(cal).toContain('DTEND;TZID=America/New_York:20240601T110000');
   });
 });
