@@ -14,11 +14,18 @@ npx @mailts/cli <command>
 
 ### `configure`
 
-Interactive wizard that writes SMTP/IMAP settings to `~/.mailts/config.json`.
+Interactive wizard that writes SMTP/IMAP settings to a config file.
 
 ```bash
-mailts configure
+mailts configure           # writes to ~/.mailts/config.json  (global)
+mailts configure --local   # writes to .mailtsrc in the current directory (project-local)
 ```
+
+| Option | Description |
+|---|---|
+| `--local` | Save to `.mailtsrc` in the current directory instead of `~/.mailts/config.json` |
+
+Use `--local` when you want per-project SMTP settings committed alongside your code (without credentials — use `${ENV_VAR}` placeholders for secrets).
 
 ### `test`
 
@@ -99,10 +106,12 @@ mailts trap --persist
 
 ## Config files
 
-Auto-loaded from two locations (merged in order):
+Auto-loaded from two locations (merged in order, local wins):
 
-1. `~/.mailts/config.json` — global defaults
-2. `.mailtsrc` or `.mailtsrc.json` in the current directory — project overrides
+| Location | Purpose |
+|---|---|
+| `~/.mailts/config.json` | Global defaults — shared across all projects |
+| `.mailtsrc` or `.mailtsrc.json` in cwd | Project-local overrides — check into your repo |
 
 `${ENV_VAR}` placeholders are expanded at load time:
 
@@ -122,11 +131,22 @@ Auto-loaded from two locations (merged in order):
 }
 ```
 
-Run `mailts configure` to generate this file interactively.
+Generate interactively:
+
+```bash
+mailts configure          # global  → ~/.mailts/config.json
+mailts configure --local  # project → .mailtsrc in current directory
+```
 
 ## Examples
 
 ```bash
+# Set up global SMTP config interactively
+mailts configure
+
+# Set up project-local SMTP config (writes .mailtsrc in current directory)
+mailts configure --local
+
 # Verify Gmail SMTP works
 MAILTS_PASSWORD=abcd-efgh mailts test --host smtp.gmail.com --username me@gmail.com
 

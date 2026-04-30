@@ -173,4 +173,103 @@ describe('SMTP Integration', () => {
     expect(ok).toBe(true);
     await mail.shutdown();
   });
+
+  it('notify() prepends [NOTIFICATION] to subject', async () => {
+    ({ server, port } = await createEsmtpServer());
+    const captured: string[] = [];
+    server.on('connection', (socket: net.Socket) => {
+      socket.on('data', (chunk: Buffer) => {
+        captured.push(chunk.toString());
+      });
+    });
+
+    const mail = new MailTs({
+      smtp: { host: '127.0.0.1', port, secure: false },
+    });
+
+    const result = await mail.notify({
+      from: 'a@b.com',
+      to: 'c@d.com',
+      subject: 'Deploy finished',
+      text: 'All good.',
+    });
+
+    expect(result.ok).toBe(true);
+    const raw = captured.join('');
+    expect(raw).toContain('Subject: [NOTIFICATION] Deploy finished');
+    await mail.shutdown();
+  });
+
+  it('alert() prepends [ALERT] and sets high priority', async () => {
+    ({ server, port } = await createEsmtpServer());
+    const captured: string[] = [];
+    server.on('connection', (socket: net.Socket) => {
+      socket.on('data', (chunk: Buffer) => {
+        captured.push(chunk.toString());
+      });
+    });
+
+    const mail = new MailTs({
+      smtp: { host: '127.0.0.1', port, secure: false },
+    });
+
+    const result = await mail.alert({
+      from: 'a@b.com',
+      to: 'c@d.com',
+      subject: 'Disk full',
+      text: 'Server out of space.',
+    });
+
+    expect(result.ok).toBe(true);
+    const raw = captured.join('');
+    expect(raw).toContain('Subject: [ALERT] Disk full');
+    expect(raw).toContain('X-Priority: 1');
+    await mail.shutdown();
+  });
+
+  it('configure() swaps SMTP host without creating a new instance', async () => {
+    ({ server, port } = await createEsmtpServer());
+
+    const mail = new MailTs({
+      smtp: { host: '127.0.0.1', port, secure: false },
+    });
+
+    const r1 = await mail.send({ from: 'a@b.com', to: 'c@d.com', subject: 'Before', text: 'hi' });
+    expect(r1.ok).toBe(true);
+
+    // Reconfigure to a second server
+    const second = await createEsmtpServer();
+    mail.configure({ smtp: { host: '127.0.0.1', port: second.port, secure: false } });
+
+    const r2 = await mail.send({ from: 'a@b.com', to: 'c@d.com', subject: 'After', text: 'hi' });
+    expect(r2.ok).toBe(true);
+
+    await mail.shutdown();
+    server.close();
+    second.server.close();
+    server = second.server; // so afterEach doesn't double-close
+  });
+
+  it('pool config is accepted and send succeeds', async () => {
+    ({ server, port } = await createEsmtpServer());
+
+    const mail = new MailTs({
+      smtp: {
+        host: '127.0.0.1',
+        port,
+        secure: false,
+        pool: { maxConnections: 2, maxMessages: 10, idleTimeout: 5_000 },
+        connectionTimeout: 5_000,
+        socketTimeout: 10_000,
+      },
+    });
+
+    const results = await Promise.all([
+      mail.send({ from: 'a@b.com', to: 'c@d.com', subject: 'P1', text: 'hi' }),
+      mail.send({ from: 'a@b.com', to: 'c@d.com', subject: 'P2', text: 'hi' }),
+    ]);
+
+    expect(results.every(r => r.ok)).toBe(true);
+    await mail.shutdown();
+  });
 });

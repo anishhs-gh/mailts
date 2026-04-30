@@ -569,6 +569,84 @@ describe('ImapSession.append', () => {
   });
 });
 
+// ─── markFlagged / markUnflagged / setFlags ───────────────────────────────────
+
+describe('ImapSession.markFlagged / markUnflagged / setFlags', () => {
+  it('markFlagged sets \\Flagged on UIDs', async () => {
+    let stored = '';
+    const handler = baseHandler([{
+      match: /STORE/i,
+      respond: (tag, line) => { stored = line; return `${tag} OK STORE done\r\n`; },
+    }]);
+
+    await withSession(handler, async (session) => {
+      await session.markFlagged([5, 6]);
+      expect(stored).toMatch(/STORE.*\+FLAGS.*\\Flagged/i);
+    });
+  });
+
+  it('markUnflagged removes \\Flagged from UIDs', async () => {
+    let stored = '';
+    const handler = baseHandler([{
+      match: /STORE/i,
+      respond: (tag, line) => { stored = line; return `${tag} OK STORE done\r\n`; },
+    }]);
+
+    await withSession(handler, async (session) => {
+      await session.markUnflagged([7]);
+      expect(stored).toMatch(/STORE.*-FLAGS.*\\Flagged/i);
+    });
+  });
+
+  it('setFlags sets arbitrary flags', async () => {
+    let stored = '';
+    const handler = baseHandler([{
+      match: /STORE/i,
+      respond: (tag, line) => { stored = line; return `${tag} OK STORE done\r\n`; },
+    }]);
+
+    await withSession(handler, async (session) => {
+      await session.setFlags([3], ['\\Answered', '\\Flagged'], true);
+      expect(stored).toMatch(/STORE.*\+FLAGS.*\\Answered/i);
+    });
+  });
+});
+
+// ─── fetchChanged (CONDSTORE) ─────────────────────────────────────────────────
+
+describe('ImapSession.fetchChanged (CONDSTORE)', () => {
+  it('issues FETCH with CHANGEDSINCE modifier', async () => {
+    let fetchLine = '';
+    const handler = (socket: net.Socket) => {
+      socket.write('* OK [CAPABILITY IMAP4rev1 CONDSTORE] ready\r\n');
+      socket.on('data', (d: Buffer) => {
+        const line = d.toString().trim();
+        const tag = line.match(/^(\S+)/)?.[1] ?? 'T';
+        if (/LOGIN/i.test(line)) {
+          socket.write(`* CAPABILITY IMAP4rev1 CONDSTORE\r\n${tag} OK LOGIN\r\n`);
+        } else if (/SELECT/i.test(line)) {
+          socket.write(`* 5 EXISTS\r\n* OK [HIGHESTMODSEQ 42] ok\r\n${tag} OK [READ-WRITE] done\r\n`);
+        } else if (/FETCH/i.test(line)) {
+          fetchLine = line;
+          socket.write(`${tag} OK FETCH done\r\n`);
+        } else if (/CLOSE/i.test(line)) {
+          socket.write(`${tag} OK CLOSE\r\n`);
+        } else if (/LOGOUT/i.test(line)) {
+          socket.write(`* BYE\r\n${tag} OK LOGOUT\r\n`);
+          socket.end();
+        } else {
+          socket.write(`${tag} OK done\r\n`);
+        }
+      });
+    };
+
+    await withSession(handler, async (session) => {
+      await session.fetchChanged(40);
+      expect(fetchLine).toMatch(/CHANGEDSINCE 40/i);
+    });
+  });
+});
+
 // ─── copy / move ──────────────────────────────────────────────────────────────
 
 describe('ImapSession.copy / move', () => {

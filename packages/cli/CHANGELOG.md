@@ -3,6 +3,15 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.1.2] — 2026-04-30
+
+### Added
+- `mailts configure --local` — saves SMTP settings to `.mailtsrc` in the current directory instead of `~/.mailts/config.json`, enabling per-project config without touching global state.
+
+### Fixed
+- `send`, `read`, and `queue` commands were reading only `~/.mailts/config.json` and never checking for a local `.mailtsrc` / `.mailtsrc.json` in the current directory. All commands now use the same config resolution order as `@mailts/core`: local file overrides global, with `${ENV_VAR}` expansion applied once.
+- Error messages updated to mention `.mailtsrc` as a config source alongside `~/.mailts/config.json`.
+
 ## [0.1.1] — 2026-04-27
 
 ### Added

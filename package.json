@@ -1,6 +1,6 @@
 {
   "name": "@mailts/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Modern native TypeScript SMTP/IMAP library — zero legacy deps, built to replace nodemailer",
   "license": "MIT",
   "author": {
