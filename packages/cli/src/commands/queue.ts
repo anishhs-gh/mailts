@@ -1,6 +1,6 @@
 import { MailTs } from '@mailts/core';
 import type { SmtpConfig, QueueJob, QueueOptions } from '@mailts/core';
-import { loadGlobalConfig, expandEnvVars } from './configure.js';
+import { loadEffectiveConfig } from './configure.js';
 import { printSuccess, printError, printInfo } from '../prompt.js';
 
 interface QueueArgs {
@@ -11,7 +11,7 @@ interface QueueArgs {
 
 export async function queueCommand(args: QueueArgs): Promise<void> {
   const { subcommand = 'status' } = args;
-  const globalCfg = expandEnvVars(loadGlobalConfig()) as Record<string, unknown>;
+  const globalCfg = loadEffectiveConfig();
   const smtpConfig = globalCfg['smtp'] as SmtpConfig | undefined;
 
   if (!smtpConfig) {

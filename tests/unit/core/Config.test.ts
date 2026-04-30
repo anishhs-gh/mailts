@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { expandEnv, loadConfig } from '../../../src/core/Config.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -80,6 +80,9 @@ describe('loadConfig', () => {
   let tmpDir: string;
   const origCwd = process.cwd();
 
+  // Pass tmpDir as globalConfigPath so the real ~/.mailts/config.json is never consulted
+  const gc = () => path.join(tmpDir, 'no-such-global.json');
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mailts-config-test-'));
     process.chdir(tmpDir);
@@ -91,26 +94,26 @@ describe('loadConfig', () => {
   });
 
   it('returns null when no config files exist', () => {
-    expect(loadConfig()).toBeNull();
+    expect(loadConfig(gc())).toBeNull();
   });
 
   it('loads .mailtsrc from cwd', () => {
     fs.writeFileSync(path.join(tmpDir, '.mailtsrc'), JSON.stringify({ smtp: { host: 'local.example.com' } }));
-    const config = loadConfig();
+    const config = loadConfig(gc());
     expect(config).not.toBeNull();
     expect((config as unknown as Record<string, unknown>)['smtp']).toMatchObject({ host: 'local.example.com' });
   });
 
   it('loads .mailtsrc.json from cwd', () => {
     fs.writeFileSync(path.join(tmpDir, '.mailtsrc.json'), JSON.stringify({ smtp: { port: 465 } }));
-    const config = loadConfig();
+    const config = loadConfig(gc());
     expect(config).not.toBeNull();
   });
 
   it('expands env vars in loaded config', () => {
     process.env['MAILTS_TEST_HOST'] = 'env.example.com';
     fs.writeFileSync(path.join(tmpDir, '.mailtsrc'), JSON.stringify({ smtp: { host: '${MAILTS_TEST_HOST}' } }));
-    const config = loadConfig() as Record<string, unknown>;
+    const config = loadConfig(gc()) as Record<string, unknown>;
     const smtp = config['smtp'] as Record<string, unknown>;
     expect(smtp['host']).toBe('env.example.com');
     delete process.env['MAILTS_TEST_HOST'];
@@ -119,13 +122,22 @@ describe('loadConfig', () => {
   it('prefers .mailtsrc over .mailtsrc.json', () => {
     fs.writeFileSync(path.join(tmpDir, '.mailtsrc'), JSON.stringify({ from: 'rc@example.com' }));
     fs.writeFileSync(path.join(tmpDir, '.mailtsrc.json'), JSON.stringify({ from: 'rcjson@example.com' }));
-    const config = loadConfig() as Record<string, unknown>;
+    const config = loadConfig(gc()) as Record<string, unknown>;
     expect(config['from']).toBe('rc@example.com');
   });
 
   it('returns null for a cwd config file with invalid JSON', () => {
     fs.writeFileSync(path.join(tmpDir, '.mailtsrc'), 'not valid json {{{{');
-    const config = loadConfig();
+    const config = loadConfig(gc());
     expect(config).toBeNull();
+  });
+
+  it('merges global config with local override', () => {
+    const globalCfg = path.join(tmpDir, 'global.json');
+    fs.writeFileSync(globalCfg, JSON.stringify({ smtp: { host: 'global.example.com', port: 587 } }));
+    fs.writeFileSync(path.join(tmpDir, '.mailtsrc'), JSON.stringify({ smtp: { host: 'local.example.com' } }));
+    const config = loadConfig(globalCfg) as Record<string, unknown>;
+    // local overrides global at the top level — smtp object from local wins
+    expect((config['smtp'] as Record<string, unknown>)['host']).toBe('local.example.com');
   });
 });

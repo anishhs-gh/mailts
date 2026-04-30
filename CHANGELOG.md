@@ -3,6 +3,20 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.1.2] — 2026-04-30
+
+### Added
+- New examples: `cc-bcc-replyto.ts`, `xoauth2.ts`, `imap-manage.ts`, `smtp-pool-config.ts` — covering CC/BCC/Reply-To, XOAUTH2 auth, full IMAP management (flags, copy, move, delete, append, CONDSTORE), and SMTP pool tuning.
+- GitHub Actions workflow (`.github/workflows/sync-gists.yml`) + `scripts/sync-gists.mjs` — automatically upserts one public GitHub Gist per example file on every push to `master`, with import rewriting (`../src/...` → `@mailts/core`) and a rendered `README.md` per gist.
+
+### Fixed
+- `loadConfig()` now accepts an optional `globalConfigPath` parameter — makes the function testable without ESM module mocking and fixes two pre-existing test isolation failures caused by the developer's `~/.mailts/config.json` leaking into the test suite.
+
+### Tests
+- Added: `notify()` subject prefix, `alert()` subject prefix + priority headers, `configure()` hot-swap, pool config + parallel send (`smtp.test.ts`).
+- Added: `markFlagged`, `markUnflagged`, `setFlags` arbitrary flags, `fetchChanged` CONDSTORE (`ImapSession.test.ts`).
+- Added: `loadConfig()` global + local merge test (`Config.test.ts`).
+
 ## [0.1.1] — 2026-04-27
 
 ### Fixed

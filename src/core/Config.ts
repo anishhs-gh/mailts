@@ -3,7 +3,6 @@ import { join } from 'path';
 import { homedir } from 'os';
 import type { MailTsConfig } from './MailTs.js';
 
-const GLOBAL_CONFIG = join(homedir(), '.mailts', 'config.json');
 const LOCAL_NAMES = ['.mailtsrc', '.mailtsrc.json'];
 
 /**
@@ -43,7 +42,8 @@ function readJson(path: string): Record<string, unknown> | null {
  * Environment variable placeholders (`${VAR}`) in string values are expanded.
  * Returns `null` when no config files exist.
  */
-export function loadConfig(): MailTsConfig | null {
+export function loadConfig(globalConfigPath?: string): MailTsConfig | null {
+  const GLOBAL_CONFIG = globalConfigPath ?? join(homedir(), '.mailts', 'config.json');
   const global = existsSync(GLOBAL_CONFIG) ? readJson(GLOBAL_CONFIG) : null;
 
   let local: Record<string, unknown> | null = null;

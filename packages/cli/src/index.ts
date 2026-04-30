@@ -16,13 +16,16 @@ USAGE
   mailts <command> [options]
 
 COMMANDS
-  configure                     Interactive SMTP setup
+  configure [--local]           Interactive SMTP setup
   test [options]                Test SMTP connection with live protocol stream
   send [options]                Send an email
   read [options]                Read emails via IMAP
   queue <subcommand>            Manage the send queue
   trap [options]                Start a local SMTP trap server (requires @mailts/trap)
   version                       Print version and exit
+
+CONFIGURE OPTIONS
+  --local                       Save to .mailtsrc in the current directory instead of ~/.mailts/config.json
 
 TEST OPTIONS
   --host <host>                 SMTP server hostname (required)
@@ -92,9 +95,15 @@ async function main(): Promise<void> {
 
   try {
     switch (command) {
-      case 'configure':
-        await configureSMTP();
+      case 'configure': {
+        const { values: cfgValues } = parseArgs({
+          args: rest,
+          options: { local: { type: 'boolean' } },
+          strict: false,
+        });
+        await configureSMTP({ local: cfgValues['local'] as boolean | undefined });
         break;
+      }
 
       case 'test': {
         const { values } = parseArgs({

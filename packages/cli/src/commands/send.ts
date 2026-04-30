@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { MailTs } from '@mailts/core';
 import type { SmtpConfig, EmailOptions } from '@mailts/core';
-import { loadGlobalConfig, expandEnvVars } from './configure.js';
+import { loadEffectiveConfig } from './configure.js';
 import { printSuccess, printError, printInfo } from '../prompt.js';
 
 interface SendArgs {
@@ -15,11 +15,11 @@ interface SendArgs {
 }
 
 export async function sendEmail(args: SendArgs): Promise<void> {
-  const globalCfg = expandEnvVars(loadGlobalConfig()) as Record<string, unknown>;
+  const globalCfg = loadEffectiveConfig();
   const smtpConfig = globalCfg['smtp'] as SmtpConfig | undefined;
 
   if (!smtpConfig) {
-    printError('SMTP not configured. Run `mailts configure` first.');
+    printError('SMTP not configured. Run `mailts configure` or add an smtp section to .mailtsrc');
     process.exitCode = 1;
     return;
   }

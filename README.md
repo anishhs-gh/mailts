@@ -636,7 +636,8 @@ test('sends welcome email', async () => {
 ```bash
 npm install -g @mailts/cli
 
-mailts configure                        # interactive SMTP/IMAP setup
+mailts configure                        # interactive SMTP/IMAP setup (global)
+mailts configure --local                # write .mailtsrc in current directory
 mailts test --host smtp.gmail.com       # verify connection
 mailts send --to you@example.com --subject "Hi" --text "Hello"
 mailts read --unseen --limit 5

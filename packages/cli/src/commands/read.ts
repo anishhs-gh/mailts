@@ -1,6 +1,6 @@
 import { MailTs } from '@mailts/core';
 import type { ImapConfig } from '@mailts/core';
-import { loadGlobalConfig, expandEnvVars } from './configure.js';
+import { loadEffectiveConfig } from './configure.js';
 import { printError, printInfo } from '../prompt.js';
 
 interface ReadArgs {
@@ -10,11 +10,11 @@ interface ReadArgs {
 }
 
 export async function readMail(args: ReadArgs): Promise<void> {
-  const globalCfg = expandEnvVars(loadGlobalConfig()) as Record<string, unknown>;
+  const globalCfg = loadEffectiveConfig();
   const imapConfig = globalCfg['imap'] as ImapConfig | undefined;
 
   if (!imapConfig) {
-    printError('IMAP not configured. Add imap section to ~/.mailts/config.json');
+    printError('IMAP not configured. Add an imap section to .mailtsrc or ~/.mailts/config.json');
     process.exitCode = 1;
     return;
   }
