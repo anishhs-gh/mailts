@@ -1,6 +1,6 @@
 {
   "name": "@mailts/trap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local SMTP mail trap with web preview UI — zero-signup Ethereal replacement",
   "license": "MIT",
   "author": {
