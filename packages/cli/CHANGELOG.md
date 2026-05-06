@@ -3,6 +3,11 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.1.3] — 2026-05-06
+
+### Changed
+- `queue` commands now read state directly from the SQLite persistence file via `SqliteQueue` static methods, instead of creating a `MailTs` instance. Enables true cross-process visibility: the CLI can inspect a queue owned by a running application. Requires `queue.persist` in config and Node 22+. Depends on `@mailts/core` ≥ 0.2.0.
+
 ## [0.1.2] — 2026-04-30
 
 ### Added

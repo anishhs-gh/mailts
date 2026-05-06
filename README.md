@@ -14,7 +14,9 @@ npm install @mailts/core
 - **DKIM signing** — rsa-sha256, relaxed/relaxed canonicalization, configurable signed headers
 - **iCal invites** — attach calendar invites (`text/calendar`) with attendees, RSVP, timezone
 - **HTML to text** — auto-generated plain-text fallback from HTML body
-- **Queue + DLQ** — concurrency-limited send queue, exponential backoff + jitter, dead-letter queue
+- **Queue + DLQ** — concurrency-limited send queue, exponential backoff + jitter, dead-letter queue, SQLite persistence for cross-process visibility (Node 22+)
+- **Health checks** — SMTP + IMAP probe with latency measurement; ready for K8s liveness/readiness endpoints
+- **Telemetry hooks** — zero-dependency observability; inject metrics/alerting callbacks for send, error, and queue events
 - **Streaming logs** — structured `LogEvent` stream, pluggable log sinks, full protocol trace (credentials auto-redacted)
 - **Aliases & templates** — define reusable email configs, plug in any template engine
 - **Middleware** — transform every outbound message in a pipeline
@@ -578,6 +580,53 @@ try {
 | `ConfigError` | `ECONFIG` | No |
 | `MimeError` | `EMIME` | No |
 | `TemplateError` | `ETEMPLATE` | No |
+
+---
+
+## Health checks
+
+```ts
+const result = await mail.health();
+// {
+//   smtp:      { ok: true,  latencyMs: 42 },
+//   imap:      { ok: true,  latencyMs: 18 },
+//   timestamp: '2026-05-06T10:00:00.000Z'
+// }
+```
+
+Pings SMTP (EHLO + NOOP) and IMAP (connect + open INBOX), measures latency, and returns a structured result. Fields are omitted when the corresponding transport is not configured.
+
+```ts
+// K8s readiness probe
+import http from 'http';
+http.createServer(async (_req, res) => {
+  const h = await mail.health();
+  res.writeHead(h.smtp?.ok ? 200 : 503, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(h));
+}).listen(8080);
+```
+
+---
+
+## Telemetry hooks
+
+Zero-dependency observability — inject callbacks without pulling in a metrics library:
+
+```ts
+const mail = new MailTs({
+  smtp: { ... },
+  telemetry: {
+    onSend:           (opts, result, latencyMs) => metrics.histogram('mail.send', latencyMs),
+    onError:          (err, phase) => logger.error({ phase, err }),
+    onQueueEnqueue:   (job) => metrics.increment('queue.enqueued'),
+    onQueueSuccess:   (job) => metrics.increment('queue.success'),
+    onQueueDead:      (job) => alerting.fire(`Dead-letter: ${job.id}`),
+    onQueueRetry:     (job, attempt, delay) => logger.warn({ attempt, delay }),
+  },
+});
+```
+
+All hooks are optional and fire synchronously after the event. Throwing inside a hook does not affect the send/queue operation.
 
 ---
 

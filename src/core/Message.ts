@@ -60,8 +60,6 @@ export async function buildMessage(options: EmailOptions): Promise<BuiltMessage>
   const fromList = parseAddressList(options.from, options.fromName);
   const toList = parseAddressList(options.to, options.toName);
   const ccList = parseAddressList(options.cc, options.ccName);
-  const bccList = parseAddressList(options.bcc, options.bccName);
-
   if (toList.length === 0) throw new MimeError('At least one recipient (to) is required');
 
   const fromAddr = fromList[0];

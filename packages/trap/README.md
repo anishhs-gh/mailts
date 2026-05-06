@@ -10,9 +10,10 @@ npm install --save-dev @mailts/trap
 
 ## Programmatic usage
 
+`@mailts/trap` has no dependencies — it works with any SMTP client (nodemailer, `@mailts/core`, Python's `smtplib`, Go's `net/smtp`, etc.). Just point your mailer at the trap's SMTP port.
+
 ```ts
 import { TrapServer } from '@mailts/trap';
-import { MailTs } from '@mailts/core';
 
 const trap = new TrapServer({
   smtpPort: 1025,  // point your app's SMTP config here
@@ -21,17 +22,10 @@ const trap = new TrapServer({
 
 await trap.start();
 
-// Point mailts (or any SMTP client) at the trap
-const mail = new MailTs({
-  smtp: { host: '127.0.0.1', port: 1025, pool: false },
-});
-
-await mail.send({
-  from: 'app@example.com',
-  to: 'user@example.com',
-  subject: 'Hello',
-  html: '<p>Hello!</p>',
-});
+// Use any SMTP client — example with nodemailer:
+import nodemailer from 'nodemailer';
+const transport = nodemailer.createTransport({ host: '127.0.0.1', port: 1025 });
+await transport.sendMail({ from: 'app@example.com', to: 'user@example.com', subject: 'Hello', html: '<p>Hello!</p>' });
 
 // Open http://localhost:1080 to inspect captured emails
 
@@ -41,7 +35,7 @@ await trap.stop();
 ## CLI
 
 ```bash
-# Start the trap server (SMTP :1025, UI :2080)
+# Start the trap server (SMTP :1025, UI :1080)
 npx mailts-trap
 
 # Custom ports
@@ -50,6 +44,49 @@ npx mailts-trap --smtp-port 2525 --http-port 2080
 # Persist messages across restarts
 npx mailts-trap --persist
 npx mailts-trap --persist /var/mail/trap
+
+# Bind all interfaces (e.g. staging VM)
+npx mailts-trap --host 0.0.0.0
+
+# CI / scripted use — no browser, no output
+npx mailts-trap --no-open --quiet
+```
+
+### CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--smtp-port <port>` | `1025` | SMTP listen port |
+| `--http-port <port>` | `1080` | HTTP / UI listen port |
+| `--host <host>` | `127.0.0.1` | Bind address |
+| `--max-messages <n>` | `100` | Max messages kept in memory |
+| `--persist [dir]` | — | Persist messages to disk; omit `dir` for `.mailts-trap/` in cwd |
+| `--no-open` | `false` | Skip auto-opening the browser |
+| `--quiet` | `false` | Suppress startup output |
+| `--version` | — | Print version and exit |
+
+### Reading messages from the terminal
+
+While the server is running, query it with `curl` (or any HTTP client):
+
+```bash
+# List all captured messages
+curl http://localhost:1080/api/messages
+
+# Get full detail for a specific message
+curl http://localhost:1080/api/messages/<id>
+
+# Get raw RFC 822 source
+curl http://localhost:1080/api/messages/<id>/raw
+
+# Stats (total, unread, storage bytes)
+curl http://localhost:1080/api/stats
+
+# Delete one message
+curl -X DELETE http://localhost:1080/api/messages/<id>
+
+# Clear all messages
+curl -X DELETE http://localhost:1080/api/messages
 ```
 
 ## Web UI
@@ -83,14 +120,24 @@ new TrapServer({
   httpPort: 1080,          // HTTP listen port (default: 1080)
   host: '127.0.0.1',       // bind address (default: 127.0.0.1)
   maxMessages: 100,         // max messages kept in memory (default: 100)
+  maxSize: 26_214_400,      // max accepted message size in bytes (default: 25 MB)
   persist: true,            // persist to .mailts-trap/ in cwd
   persist: '/path/to/dir',  // or a custom directory
 });
 ```
 
-## Peer dependency
+### Reading captured messages programmatically
 
-Requires `@mailts/core >= 0.1.0` as a peer dependency when used with the `@mailts/core` client. Works with any SMTP client that can be configured to point at `localhost`.
+`trap.store` is public — useful in tests to assert on captured mail without going through the HTTP API:
+
+```ts
+const messages = trap.store.getAll();       // CapturedMessage[], newest first
+const msg = trap.store.getById(id);         // CapturedMessage | undefined
+```
+
+## No dependencies
+
+`@mailts/trap` has zero runtime dependencies — it is a standalone Node.js SMTP server built on the standard library. No peer dependencies required.
 
 
 ---

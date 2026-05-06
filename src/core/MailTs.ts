@@ -4,9 +4,13 @@ import { buildMessage } from './Message.js';
 import { signDkim } from './Dkim.js';
 import { TemplateRenderer } from './Template.js';
 import { MailQueue } from '../queue/MailQueue.js';
+import { SqliteQueue, resolveQueueDbPath } from '../queue/SqliteQueue.js';
 import { Logger } from '../logger/Logger.js';
 import { ImapSession } from '../imap/ImapSession.js';
 import { loadConfig } from './Config.js';
+import { HealthChecker } from '../health/HealthChecker.js';
+import type { HealthResult } from '../health/HealthChecker.js';
+import type { TelemetryHooks } from '../telemetry/index.js';
 import type { SmtpConfig } from '../types/smtp.js';
 import type { ImapConfig } from '../types/imap.js';
 import type { QueueOptions } from '../types/queue.js';
@@ -49,6 +53,8 @@ export interface MailTsConfig {
    * ```
    */
   transport?: Transport;
+  /** Telemetry hooks for observability — wired to send and queue events. */
+  telemetry?: TelemetryHooks;
 }
 
 /**
@@ -82,6 +88,7 @@ export class MailTs {
   private aliases: Map<string, AliasConfig> = new Map();
   private devMode = false;
   private queueOpts: QueueOptions = {};
+  private hooks: TelemetryHooks = {};
 
   /**
    * Structured logger — subscribe via `logger.onEvent(fn)` or stream via
@@ -131,6 +138,8 @@ export class MailTs {
       this.imapConfig = config.imap;
     }
 
+    if (config.telemetry) this.hooks = config.telemetry;
+
     if (config.queue !== undefined) {
       this.queueOpts = config.queue;
       this.rebuildQueue();
@@ -138,8 +147,24 @@ export class MailTs {
   }
 
   private rebuildQueue(): void {
-    const q = new MailQueue(this.queueOpts, this.logger);
+    let q: MailQueue;
+    if (this.queueOpts.persist) {
+      try {
+        q = new SqliteQueue(resolveQueueDbPath(this.queueOpts.persist), this.queueOpts, this.logger);
+      } catch (err) {
+        this.logger.warn('queue', `SqliteQueue failed, falling back to MailQueue: ${err instanceof Error ? err.message : String(err)}`);
+        q = new MailQueue(this.queueOpts, this.logger);
+      }
+    } else {
+      q = new MailQueue(this.queueOpts, this.logger);
+    }
     q.setSendFn((opts) => this.sendDirect(opts));
+
+    if (this.hooks.onQueueEnqueue) q.on('enqueued', this.hooks.onQueueEnqueue);
+    if (this.hooks.onQueueSuccess) q.on('success',  this.hooks.onQueueSuccess);
+    if (this.hooks.onQueueDead)   q.on('dead',      this.hooks.onQueueDead);
+    if (this.hooks.onQueueRetry)  q.on('retry',     (job, attempt, delay) => this.hooks.onQueueRetry!(job, attempt, delay));
+
     this._queue = q;
   }
 
@@ -285,45 +310,50 @@ export class MailTs {
   }
 
   private async sendDirect(options: EmailOptions): Promise<SendResult> {
+    const t0 = Date.now();
     try {
       const built = await buildMessage(options);
       const raw = this.smtpConfig?.dkim ? signDkim(built.raw, this.smtpConfig.dkim) : built.raw;
       const message = { ...built, raw };
 
+      let result: SendResult;
+
       if (this.transportOverride) {
         const transport = this.transportOverride;
         this.logger.debug('core', `Sending via ${transport.name} (${raw.length} bytes)`);
-        const result = await transport.send(message, options);
-        this.logger.info('core', `Message sent (${result.messageId})`);
-        return { ok: true, messageId: result.messageId, accepted: result.accepted, rejected: result.rejected };
-      }
-
-      if (this.poolingDisabled) {
+        const r = await transport.send(message, options);
+        this.logger.info('core', `Message sent (${r.messageId})`);
+        result = { ok: true, messageId: r.messageId, accepted: r.accepted, rejected: r.rejected };
+      } else if (this.poolingDisabled) {
         const client = new SmtpClient(this.requireSmtpConfig(), this.logger);
         await client.connect();
         try {
           this.logger.debug('smtp', `Sending message (${raw.length} bytes) to ${built.to.join(', ')}`);
           const serverId = await client.sendMessage(built.from, built.to, raw);
           this.logger.info('smtp', `Message sent (${built.messageId}) — server id: ${serverId}`);
-          return { ok: true, messageId: built.messageId, accepted: built.to, rejected: [] };
+          result = { ok: true, messageId: built.messageId, accepted: built.to, rejected: [] };
         } finally {
           await client.quit().catch(() => {});
         }
+      } else {
+        const pool = this.requireSmtp();
+        const client = await pool.acquire();
+        try {
+          this.logger.debug('smtp', `Sending message (${raw.length} bytes) to ${built.to.join(', ')}`);
+          const serverId = await client.sendMessage(built.from, built.to, raw);
+          this.logger.info('smtp', `Message sent (${built.messageId}) — server id: ${serverId}`);
+          result = { ok: true, messageId: built.messageId, accepted: built.to, rejected: [] };
+        } finally {
+          pool.release(client);
+        }
       }
 
-      const pool = this.requireSmtp();
-      const client = await pool.acquire();
-      try {
-        this.logger.debug('smtp', `Sending message (${raw.length} bytes) to ${built.to.join(', ')}`);
-        const serverId = await client.sendMessage(built.from, built.to, raw);
-        this.logger.info('smtp', `Message sent (${built.messageId}) — server id: ${serverId}`);
-        return { ok: true, messageId: built.messageId, accepted: built.to, rejected: [] };
-      } finally {
-        pool.release(client);
-      }
+      this.hooks.onSend?.(options, result, Date.now() - t0);
+      return result;
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
       this.logger.error('core', `Send failed: ${e.message}`);
+      this.hooks.onError?.(e, 'send');
       const mailErr = err instanceof MailTsError
         ? err
         : new MailTsError(e.message, 'ECONN', true);
@@ -447,6 +477,14 @@ export class MailTs {
       throw new ConfigError('IMAP not configured. Pass imap config to configure() or constructor.');
     }
     return new ImapSession(this.imapConfig, this.logger);
+  }
+
+  // ─── Health ───────────────────────────────────────────────────────────────
+
+  /** Run SMTP and IMAP connectivity checks and return a structured result. */
+  async health(): Promise<HealthResult> {
+    const checker = new HealthChecker(this.smtpConfig, this.imapConfig, this.logger);
+    return checker.check();
   }
 
   // ─── Graceful shutdown ────────────────────────────────────────────────────

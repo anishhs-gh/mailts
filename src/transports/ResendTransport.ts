@@ -1,5 +1,5 @@
 import { httpRequest } from './HttpClient.js';
-import { toAddressStrings, toAddressObjects, resolveApiAttachments } from './utils.js';
+import { toAddressStrings, resolveApiAttachments } from './utils.js';
 import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';

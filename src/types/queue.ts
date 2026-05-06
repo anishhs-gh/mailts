@@ -34,6 +34,9 @@ export interface QueueOptions {
    */
   jobTimeout?: number;
   deadLetter?: DeadLetterOptions;
+  /** Persist queue state to disk for cross-process visibility and crash recovery.
+   *  Pass `true` for `~/.mailts/queue.db` (SQLite, Node 22+) or a custom file path. */
+  persist?: string | boolean;
 }
 
 export interface QueueJob {

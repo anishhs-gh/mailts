@@ -97,3 +97,11 @@ export { ImapSession } from './imap/ImapSession.js';
 export { MailQueue } from './queue/MailQueue.js';
 export { RetryPolicy } from './queue/RetryPolicy.js';
 export { DeadLetterQueue } from './queue/DeadLetterQueue.js';
+export { SqliteQueue, resolveQueueDbPath } from './queue/SqliteQueue.js';
+
+// Health
+export { HealthChecker } from './health/HealthChecker.js';
+export type { HealthResult, SmtpHealth, ImapHealth } from './health/HealthChecker.js';
+
+// Telemetry
+export type { TelemetryHooks } from './telemetry/index.js';

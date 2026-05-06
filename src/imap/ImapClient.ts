@@ -42,13 +42,16 @@ export class ImapClient extends EventEmitter {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private idleCallback: ((msg: Partial<ImapMessage>) => void) | null = null;
   private inIdle = false;
-  private selectedMailbox: ImapMailboxStatus | null = null;
+  private _selectedMailbox: ImapMailboxStatus | null = null;
 
   /** Serialization lock — ensures commands do not interleave on the socket. */
   private cmdLock: Promise<unknown> = Promise.resolve();
 
   /** Cached server capabilities (populated by getCapabilities() or after login). */
   private capabilities: Set<string> = new Set();
+
+  /** The last mailbox opened via select() or examine(). Null before any selection. */
+  get selectedMailbox(): ImapMailboxStatus | null { return this._selectedMailbox; }
 
   readonly config: ImapConfig;
   private readonly logger: Logger | null;
@@ -347,7 +350,7 @@ export class ImapClient extends EventEmitter {
       this.clearUntagged();
       await this.rawCommand(ImapCmd.select(mailbox));
       const status = this.buildMailboxStatus(mailbox, false);
-      this.selectedMailbox = status;
+      this._selectedMailbox = status;
       this.state = 'selected';
       return status;
     });
@@ -362,7 +365,7 @@ export class ImapClient extends EventEmitter {
       this.clearUntagged();
       await this.rawCommand(ImapCmd.examine(mailbox));
       const status = this.buildMailboxStatus(mailbox, true);
-      this.selectedMailbox = status;
+      this._selectedMailbox = status;
       this.state = 'selected';
       return status;
     });

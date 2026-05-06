@@ -25,6 +25,12 @@ export class PersistStore extends MemoryStore {
     this.append(msg);
   }
 
+  override delete(id: string): boolean {
+    const deleted = super.delete(id);
+    if (deleted) this.rewrite();
+    return deleted;
+  }
+
   override clear(): void {
     super.clear();
     writeFileSync(this.filePath, '', 'utf8');
@@ -59,6 +65,13 @@ export class PersistStore extends MemoryStore {
     const dir = dirname(this.filePath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(this.filePath, JSON.stringify(msg) + '\n', { flag: 'a', encoding: 'utf8' });
+  }
+
+  private rewrite(): void {
+    const dir = dirname(this.filePath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const lines = this.getAll().reverse().map(m => JSON.stringify(m)).join('\n');
+    writeFileSync(this.filePath, lines ? lines + '\n' : '', 'utf8');
   }
 }
 

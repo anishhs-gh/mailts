@@ -1,4 +1,4 @@
-import { decodeRfc2047, parseEnvelopeAddresses, parseList } from './ImapParser.js';
+import { decodeRfc2047, parseEnvelopeAddresses } from './ImapParser.js';
 import type { ImapEnvelope, ImapMessage } from '../types/imap.js';
 
 /** Parse a FETCH response data string into an ImapMessage. */

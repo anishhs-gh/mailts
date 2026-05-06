@@ -28,6 +28,7 @@ export class HttpServer {
 
   close(): Promise<void> {
     return new Promise((resolve, reject) => {
+      this.broadcast('shutdown', {});
       for (const client of this.sseClients) client.end();
       this.server.close(err => err ? reject(err) : resolve());
     });
@@ -97,7 +98,11 @@ export class HttpServer {
 
       if (method === 'GET') {
         msg.read = true;
-        return this.json(res, 200, msg);
+        const { raw, attachments, ...rest } = msg;
+        return this.json(res, 200, {
+          ...rest,
+          attachments: attachments.map(({ content, ...a }) => a),
+        });
       }
       if (method === 'DELETE') {
         this.opts.store.delete(id);
