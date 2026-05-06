@@ -3,6 +3,19 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.2.0] — 2026-05-06
+
+### Added
+- `HealthChecker` — pings SMTP (EHLO + NOOP) and IMAP (connect + open INBOX), measures latency, returns a structured result. Accessible via `mail.health()` or directly `new HealthChecker(smtpCfg, imapCfg).check()`. Suitable for K8s liveness/readiness probes.
+- `TelemetryHooks` — zero-dependency observability injection. Six optional hooks: `onSend`, `onError`, `onQueueEnqueue`, `onQueueSuccess`, `onQueueDead`, `onQueueRetry`. Pass as `telemetry` in `MailTsConfig`.
+- `SqliteQueue` — extends `MailQueue` with `node:sqlite` persistence (Node 22+). Enables cross-process queue visibility: the CLI can read queue state from a running app without sharing process memory. Exports `resolveQueueDbPath` helper.
+
+### Fixed
+- Removed unused private fields `replyLines`/`replyCode` from `SmtpClient` (never wired to `SmtpStream`).
+- Removed unused `bccList` variable in `buildMessage` (BCC is correctly included in the SMTP envelope via `extractEmails`; the `Bcc:` header is intentionally absent per RFC 5322 §3.6.3).
+- Removed unused `parseList` import in `ImapFetch` and `toAddressObjects` import in `ResendTransport`.
+- `ImapClient.selectedMailbox` getter — previously the field was written after `select()`/`examine()` but never exposed; now accessible as a public getter for direct `ImapClient` consumers.
+
 ## [0.1.2] — 2026-04-30
 
 ### Added

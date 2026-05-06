@@ -372,8 +372,7 @@ export const UI_HTML = `<!DOCTYPE html>
     if (tab === 'html') {
       frame.style.display = '';
       pre.style.display   = 'none';
-      var blob = new Blob([currentMsg.html || ''], { type: 'text/html' });
-      frame.src = URL.createObjectURL(blob);
+      frame.srcdoc = currentMsg.html || '';
     } else if (tab === 'text') {
       frame.style.display = 'none';
       pre.style.display   = 'block';
@@ -427,7 +426,7 @@ export const UI_HTML = `<!DOCTYPE html>
     es.addEventListener('message', loadMessages);
     es.addEventListener('deleted', loadMessages);
     es.addEventListener('cleared', loadMessages);
-    es.onerror = function() { setTimeout(connectSSE, 3000); };
+    es.addEventListener('shutdown', function() { es.close(); });
   }
 
   loadMessages();

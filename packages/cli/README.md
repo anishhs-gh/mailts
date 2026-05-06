@@ -102,7 +102,24 @@ Start a local SMTP trap (requires `@mailts/trap`).
 mailts trap
 mailts trap --smtp-port 2525 --http-port 2080
 mailts trap --persist
+mailts trap --persist /var/mail/trap   # custom persist directory
+mailts trap --host 0.0.0.0            # bind all interfaces
+mailts trap --no-open --quiet         # CI / scripted use
 ```
+
+| Option | Default | Description |
+|---|---|---|
+| `--smtp-port` | `1025` | SMTP listen port |
+| `--http-port` | `1080` | HTTP / UI listen port |
+| `--host` | `127.0.0.1` | Bind address |
+| `--max-messages` | `100` | Max messages kept in memory |
+| `--persist [dir]` | — | Persist to disk; omit `dir` for `.mailts-trap/` in cwd |
+| `--no-open` | `false` | Skip auto-opening the browser |
+| `--quiet` | `false` | Suppress startup output |
+
+Once running, open `http://localhost:1080` to inspect captured mail. The trap also exposes a REST API for scripted access — see [`@mailts/trap`](https://www.npmjs.com/package/@mailts/trap) for the full API reference.
+
+> `mailts read` connects to IMAP and cannot read from the trap server.
 
 ## Config files
 

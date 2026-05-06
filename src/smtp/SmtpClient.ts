@@ -56,8 +56,6 @@ export class SmtpClient extends EventEmitter {
   private state: SmtpState = 'idle';
   private capabilities: SmtpCapabilities | null = null;
   private replyQueue: PendingReply[] = [];
-  private replyLines: string[] = [];
-  private replyCode: number | null = null;
   private redactor: Redactor;
   private messagesSent = 0;
 

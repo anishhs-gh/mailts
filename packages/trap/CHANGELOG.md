@@ -3,6 +3,13 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.1.1] — 2026-05-06
+
+### Fixed
+- `PersistStore.delete()` now rewrites the NDJSON file after removal. Previously, deleting a message in-session removed it from memory but the file was not updated, so the message reappeared after a restart.
+- `GET /api/messages/:id` no longer includes the `raw` buffer or `attachments[].content` buffers in the JSON response — these are binary fields that inflated payload size and were not needed by the UI.
+- Server now broadcasts a `shutdown` SSE event to all connected clients before closing. Clients that listen for this event (the web UI does) can cleanly close the `EventSource` instead of receiving a stream of `ERR_CONNECTION_REFUSED` errors after the server stops.
+
 ## [0.1.0] — 2026-04-25
 
 ### Added

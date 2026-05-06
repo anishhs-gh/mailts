@@ -7,7 +7,7 @@ import { queueCommand } from './commands/queue.js';
 import { trapCommand } from './commands/trap.js';
 import { printError } from './prompt.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.3';
 
 const HELP = `
 mailts — Modern SMTP/IMAP CLI  v${VERSION}
@@ -60,6 +60,7 @@ TRAP OPTIONS
   --http-port <port>            HTTP/UI listen port  (default: 1080)
   --host <host>                 Bind address  (default: 127.0.0.1)
   --max-messages <n>            In-memory message cap  (default: 100)
+  --persist [dir]               Persist messages to disk; omit dir for .mailts-trap/ in cwd
   --no-open                     Don't auto-open browser
   --quiet                       Suppress startup output
 

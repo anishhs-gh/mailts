@@ -37,14 +37,6 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build && npm run test"
   },
-  "peerDependencies": {
-    "@mailts/core": ">=0.1.0 <2.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@mailts/core": {
-      "optional": false
-    }
-  },
   "devDependencies": {
     "@mailts/core": "file:../..",
     "@types/node": "^22.0.0",
