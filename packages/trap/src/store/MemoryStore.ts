@@ -62,6 +62,14 @@ export class MemoryStore {
     return this.messages.find(m => m.id === id);
   }
 
+  /** Mark a message as read. Returns `true` if found. */
+  markRead(id: string): boolean {
+    const msg = this.messages.find(m => m.id === id);
+    if (!msg || msg.read) return false;
+    msg.read = true;
+    return true;
+  }
+
   /** Remove a message by ID. Returns `true` if it was found and deleted. */
   delete(id: string): boolean {
     const idx = this.messages.findIndex(m => m.id === id);

@@ -5,6 +5,8 @@ import { loadEffectiveConfig } from './configure.js';
 import { printSuccess, printError, printInfo } from '../prompt.js';
 
 interface SendArgs {
+  host?: string;
+  port?: string;
   from?: string;
   to: string;
   subject?: string;
@@ -16,9 +18,15 @@ interface SendArgs {
 
 export async function sendEmail(args: SendArgs): Promise<void> {
   const globalCfg = loadEffectiveConfig();
-  const smtpConfig = globalCfg['smtp'] as SmtpConfig | undefined;
+  let smtpConfig = globalCfg['smtp'] as SmtpConfig | undefined;
 
-  if (!smtpConfig) {
+  if (args.host) {
+    smtpConfig = {
+      ...(smtpConfig ?? {}),
+      host: args.host,
+      ...(args.port ? { port: parseInt(args.port, 10) } : {}),
+    } as SmtpConfig;
+  } else if (!smtpConfig) {
     printError('SMTP not configured. Run `mailts configure` or add an smtp section to .mailtsrc');
     process.exitCode = 1;
     return;

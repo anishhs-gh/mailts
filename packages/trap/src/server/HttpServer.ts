@@ -29,8 +29,15 @@ export class HttpServer {
   close(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.broadcast('shutdown', {});
-      for (const client of this.sseClients) client.end();
-      this.server.close(err => err ? reject(err) : resolve());
+      // Delay end() so browsers receive the shutdown event before the connection drops,
+      // preventing the native EventSource auto-reconnect race condition.
+      setTimeout(() => {
+        for (const client of this.sseClients) client.end();
+        this.server.close(err => {
+          if (err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') reject(err);
+          else resolve();
+        });
+      }, 50);
     });
   }
 
@@ -97,7 +104,7 @@ export class HttpServer {
       if (!msg) return this.json(res, 404, { error: 'Not found' });
 
       if (method === 'GET') {
-        msg.read = true;
+        this.opts.store.markRead(id);
         const { raw, attachments, ...rest } = msg;
         return this.json(res, 200, {
           ...rest,

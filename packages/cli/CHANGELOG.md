@@ -3,6 +3,16 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.1.5] — 2026-05-09
+
+### Added
+- `mailts send --host <host> --port <port>` — override the configured SMTP host and port per invocation. Useful for targeting a local trap server (`--host 127.0.0.1 --port 1025`) without changing the global config.
+- `cli.mjs` thin wrapper as the new `bin` entry point. Loads `dist/index.js` via a dynamic import so that a module-level `SyntaxError` from an outdated `@mailts/core` (missing named export) is caught and shown as a clear, actionable message instead of a raw Node crash.
+
+### Fixed
+- **Version mismatch handling** — when `@mailts/core` is outdated and missing an export used by the `queue` command, the CLI now shows a friendly error with the missing export name and fix instructions (`npx --yes @mailts/cli@latest <command>` or `npm install -g @mailts/cli`). Previously the entire CLI crashed with an unreadable `SyntaxError` even for unrelated commands like `trap`.
+- `queue` command now uses a dynamic import for `SqliteQueue` so commands unrelated to the queue (`trap`, `send`, `test`, etc.) continue to work normally even when `@mailts/core` is outdated.
+
 ## [0.1.3] — 2026-05-06
 
 ### Changed

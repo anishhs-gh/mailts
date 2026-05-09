@@ -1,19 +1,19 @@
 {
   "name": "@mailts/cli",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Command-line interface for mailts — configure, test, send, read, queue",
   "license": "MIT",
   "author": {
     "name": "Anish Shekh",
-    "email": "anishsh701@gmail.com",
     "url": "https://github.com/anishhs-gh"
   },
   "type": "module",
   "bin": {
-    "mailts": "./dist/index.js"
+    "mailts": "./cli.mjs"
   },
   "files": [
     "dist",
+    "cli.mjs",
     "README.md",
     "LICENSE"
   ],
@@ -45,7 +45,14 @@
     "cli",
     "email",
     "smtp",
-    "imap"
+    "imap",
+    "mail",
+    "send-email",
+    "mailer",
+    "email-cli",
+    "transactional",
+    "trap",
+    "queue"
   ],
   "repository": {
     "type": "git",

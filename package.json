@@ -5,7 +5,6 @@
   "license": "MIT",
   "author": {
     "name": "Anish Shekh",
-    "email": "anishsh701@gmail.com",
     "url": "https://github.com/anishhs-gh"
   },
   "type": "module",
@@ -84,7 +83,15 @@
     "nodemailer",
     "mailts",
     "queue",
-    "streaming"
+    "streaming",
+    "mailer",
+    "transactional",
+    "send-email",
+    "email-client",
+    "mime",
+    "attachments",
+    "dkim",
+    "tls"
   ],
   "repository": {
     "type": "git",
