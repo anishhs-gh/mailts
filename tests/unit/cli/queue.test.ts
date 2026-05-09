@@ -10,15 +10,6 @@ vi.mock('../../../packages/cli/src/commands/configure.js', () => ({
   loadEffectiveConfig: vi.fn(() => ({})),
 }));
 
-vi.mock('@mailts/core', () => ({
-  SqliteQueue: {
-    readStats:   vi.fn(() => ({ pending: 0, running: 0, succeeded: 0, dead: 0 })),
-    readDlq:     vi.fn(() => []),
-    requeueJob:  vi.fn(() => true),
-    clearDlq:    vi.fn(),
-  },
-  resolveQueueDbPath: vi.fn(() => '/tmp/test-queue.db'),
-}));
 
 import { queueCommand } from '../../../packages/cli/src/commands/queue.js';
 import { printError } from '../../../packages/cli/src/prompt.js';
