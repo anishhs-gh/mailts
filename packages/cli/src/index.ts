@@ -134,6 +134,8 @@ async function main(): Promise<void> {
         const { values } = parseArgs({
           args: rest,
           options: {
+            host:        { type: 'string' },
+            port:        { type: 'string' },
             from:        { type: 'string' },
             to:          { type: 'string' },
             subject:     { type: 'string' },
@@ -148,6 +150,8 @@ async function main(): Promise<void> {
           printError('--to is required (or use --alias)'); process.exitCode = 1; return;
         }
         await sendEmail({
+          host:        values['host'] as string | undefined,
+          port:        values['port'] as string | undefined,
           from:        values['from'] as string | undefined,
           to:          (values['to'] as string | undefined) ?? '',
           subject:     values['subject'] as string | undefined,

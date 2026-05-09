@@ -1,11 +1,10 @@
 {
   "name": "@mailts/trap",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local SMTP mail trap with web preview UI — zero-signup Ethereal replacement",
   "license": "MIT",
   "author": {
     "name": "Anish Shekh",
-    "email": "anishsh701@gmail.com",
     "url": "https://github.com/anishhs-gh"
   },
   "type": "module",
@@ -49,9 +48,16 @@
     "email",
     "smtp",
     "trap",
+    "mail-trap",
     "preview",
     "development",
-    "ethereal"
+    "ethereal",
+    "mailhog",
+    "mailtrap",
+    "local-smtp",
+    "email-testing",
+    "web-ui",
+    "devtools"
   ],
   "repository": {
     "type": "git",

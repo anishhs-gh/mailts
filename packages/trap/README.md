@@ -60,7 +60,7 @@ npx mailts-trap --no-open --quiet
 | `--http-port <port>` | `1080` | HTTP / UI listen port |
 | `--host <host>` | `127.0.0.1` | Bind address |
 | `--max-messages <n>` | `100` | Max messages kept in memory |
-| `--persist [dir]` | — | Persist messages to disk; omit `dir` for `.mailts-trap/` in cwd |
+| `--persist [dir]` | — | Persist messages to disk (including read status); omit `dir` for `~/.mailts-trap/` default |
 | `--no-open` | `false` | Skip auto-opening the browser |
 | `--quiet` | `false` | Suppress startup output |
 | `--version` | — | Print version and exit |
@@ -98,6 +98,7 @@ Open `http://localhost:1080` (or your configured `httpPort`) to:
 - Download attachments
 - Delete individual messages or clear all
 - Real-time updates via Server-Sent Events (no polling)
+- Connection status indicator (`● Live` / `○ Disconnected` / `○ Server stopped`) — the Refresh button becomes a **Reconnect** button when the connection is lost, restoring the SSE stream and reloading messages in one click
 
 ## REST API
 
@@ -121,8 +122,8 @@ new TrapServer({
   host: '127.0.0.1',       // bind address (default: 127.0.0.1)
   maxMessages: 100,         // max messages kept in memory (default: 100)
   maxSize: 26_214_400,      // max accepted message size in bytes (default: 25 MB)
-  persist: true,            // persist to .mailts-trap/ in cwd
-  persist: '/path/to/dir',  // or a custom directory
+  persist: true,            // persist to ~/.mailts-trap/ (messages + read status)
+  persist: '/path/to/file', // or a custom file path
 });
 ```
 

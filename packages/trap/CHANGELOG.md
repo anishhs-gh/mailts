@@ -3,6 +3,18 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.1.2] — 2026-05-09
+
+### Added
+- Connection status indicator in the web UI header: `● Live` when connected, `○ Disconnected` on unexpected drop, `○ Server stopped` after a clean shutdown.
+- Refresh button morphs into a **Reconnect** button when disconnected or after server stop. Clicking it re-establishes the SSE connection and reloads messages in one action.
+- `MemoryStore.markRead()` method; `PersistStore` overrides it to rewrite the persistence file so read/unread status survives server restarts when using `--persist`.
+
+### Fixed
+- **SSE reconnection loop** — browser's native `EventSource` auto-reconnects on any connection drop. When the server quit, a race between the `shutdown` SSE event and the TCP close caused the browser to see an error instead, so `es.close()` was never called and the UI entered an infinite retry loop filling the network tab. Fixed by: (1) adding an `error` handler that calls `es.close()` to stop native retries, (2) a `shuttingDown` flag to distinguish intentional stop from unexpected disconnect, and (3) a 50 ms flush delay in `HttpServer.close()` so the browser receives the `shutdown` event before the connection drops.
+- **`ERR_SERVER_NOT_RUNNING` crash on Ctrl+C** — both `HttpServer` and `SmtpServer` now treat this error code as a successful close instead of rejecting, preventing an unhandled rejection crash on exit.
+- Detail view now clears when the currently open message is removed (deleted externally or cleared) and the list refreshes — previously the sidebar removed the entry but the detail pane kept showing the stale message.
+
 ## [0.1.1] — 2026-05-06
 
 ### Fixed
