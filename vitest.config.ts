@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config';
+import { resolve } from 'path';
 
 export default defineConfig({
   test: {
@@ -16,5 +17,8 @@ export default defineConfig({
   },
   resolve: {
     conditions: ['node'],
+    alias: {
+      '@mailts/core': resolve(__dirname, 'src/index.ts'),
+    },
   },
 });

@@ -25,6 +25,12 @@ export class PersistStore extends MemoryStore {
     this.append(msg);
   }
 
+  override markRead(id: string): boolean {
+    const changed = super.markRead(id);
+    if (changed) this.rewrite();
+    return changed;
+  }
+
   override delete(id: string): boolean {
     const deleted = super.delete(id);
     if (deleted) this.rewrite();

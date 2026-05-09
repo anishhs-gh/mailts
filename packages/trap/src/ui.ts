@@ -31,6 +31,7 @@ export const UI_HTML = `<!DOCTYPE html>
     header h1 span { color: #0070f3; }
 
     #stats { font-size: 12px; color: #888; }
+    #conn-status { font-size: 12px; }
 
     .spacer { flex: 1; }
 
@@ -214,6 +215,7 @@ export const UI_HTML = `<!DOCTYPE html>
 <header>
   <h1>@mailts<span>/trap</span></h1>
   <span id="stats"></span>
+  <span id="conn-status"></span>
   <div class="spacer"></div>
   <button id="btn-refresh">Refresh</button>
   <button id="btn-clear" class="danger">Clear all</button>
@@ -280,6 +282,12 @@ export const UI_HTML = `<!DOCTYPE html>
   // ── Sidebar ───────────────────────────────────────────────────────────────
 
   function renderList() {
+    if (currentId && !messages.some(function(m) { return m.id === currentId; })) {
+      currentId = null;
+      currentMsg = null;
+      $('msg-view').classList.remove('visible');
+      $('placeholder').style.display = '';
+    }
     var sb = $('sidebar');
     if (!messages.length) {
       sb.innerHTML = '<div class="empty-state">No messages yet.<br>Point your SMTP config at this trap.</div>';
@@ -421,13 +429,53 @@ export const UI_HTML = `<!DOCTYPE html>
 
   // ── SSE ───────────────────────────────────────────────────────────────────
 
+  var shuttingDown = false;
+  var activeEs = null;
+
+  function setConnStatus(state) {
+    var el = $('conn-status');
+    var rb = $('btn-refresh');
+    if (state === 'live') {
+      el.textContent = '● Live';
+      el.style.color = '#16a34a';
+      rb.textContent = 'Refresh';
+      rb.onclick = loadMessages;
+    } else if (state === 'off') {
+      el.textContent = '○ Server stopped';
+      el.style.color = '#888';
+      rb.textContent = 'Reconnect';
+      rb.onclick = connectSSE;
+    } else {
+      el.textContent = '○ Disconnected';
+      el.style.color = '#dc2626';
+      rb.textContent = 'Reconnect';
+      rb.onclick = connectSSE;
+    }
+  }
+
   function connectSSE() {
+    shuttingDown = false;
+    if (activeEs) { activeEs.close(); activeEs = null; }
     var es = new EventSource('/api/events');
+    activeEs = es;
+    es.addEventListener('open', function() { setConnStatus('live'); loadMessages(); });
     es.addEventListener('message', loadMessages);
     es.addEventListener('deleted', loadMessages);
     es.addEventListener('cleared', loadMessages);
-    es.addEventListener('shutdown', function() { es.close(); });
+    es.addEventListener('shutdown', function() {
+      shuttingDown = true;
+      es.close();
+      activeEs = null;
+      setConnStatus('off');
+    });
+    es.addEventListener('error', function() {
+      es.close(); // stop native auto-reconnect
+      activeEs = null;
+      if (!shuttingDown) setConnStatus('error');
+    });
   }
+
+  $('btn-refresh').onclick = loadMessages;
 
   loadMessages();
   connectSSE();

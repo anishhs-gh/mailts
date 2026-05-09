@@ -1,5 +1,4 @@
-import { SqliteQueue, resolveQueueDbPath } from '@mailts/core';
-import type { QueueOptions } from '@mailts/core';
+import type { SqliteQueue as SqliteQueueType, QueueOptions } from '@mailts/core';
 import { loadEffectiveConfig } from './configure.js';
 import { printSuccess, printError, printInfo } from '../prompt.js';
 
@@ -19,6 +18,30 @@ export async function queueCommand(args: QueueArgs): Promise<void> {
     printError('Queue commands require queue.persist in config (needs Node 22+). Add: { "queue": { "persist": true } } to ~/.mailts/config.json');
     process.exitCode = 1;
     return;
+  }
+
+  let SqliteQueue: typeof SqliteQueueType;
+  let resolveQueueDbPath: (p: boolean | string) => string;
+  try {
+    ({ SqliteQueue, resolveQueueDbPath } = await import('@mailts/core'));
+  } catch (err) {
+    if (
+      err instanceof SyntaxError &&
+      typeof err.message === 'string' &&
+      err.message.includes("'@mailts/core'") &&
+      err.message.includes('does not provide an export named')
+    ) {
+      const name = err.message.match(/export named '([^']+)'/)?.[1] ?? 'unknown';
+      printError(
+        `@mailts/core is outdated — missing export '${name}'.\n` +
+        `Fix options:\n\n` +
+        `  npx --yes @mailts/cli@latest queue      (one-off, no install)\n` +
+        `  npm install -g @mailts/cli              (install globally)`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
   }
 
   const dbPath = resolveQueueDbPath(persistCfg);
@@ -42,7 +65,7 @@ export async function queueCommand(args: QueueArgs): Promise<void> {
       break;
 
     case 'dlq':
-      handleDlq(dbPath, args.jobId ? 'retry' : 'list', args);
+      handleDlq(SqliteQueue, dbPath, args.jobId ? 'retry' : 'list', args);
       break;
 
     default:
@@ -52,7 +75,7 @@ export async function queueCommand(args: QueueArgs): Promise<void> {
   }
 }
 
-function handleDlq(dbPath: string, sub: string, args: QueueArgs): void {
+function handleDlq(SqliteQueue: typeof SqliteQueueType, dbPath: string, sub: string, args: QueueArgs): void {
   switch (sub) {
     case 'list': {
       const jobs = SqliteQueue.readDlq(dbPath);

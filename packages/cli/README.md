@@ -6,9 +6,9 @@ Command-line interface for `@mailts/core` — configure, test connections, send 
 
 ```bash
 npm install -g @mailts/cli
-# or run without installing:
-npx @mailts/cli <command>
 ```
+
+Once installed, the `mailts` command is available globally.
 
 ## Commands
 
@@ -53,11 +53,14 @@ Send a single email from the command line.
 ```bash
 mailts send --to you@example.com --subject "Hello" --text "Hi there"
 mailts send --to you@example.com --html ./email.html --attachments report.pdf,logo.png
+mailts send --host 127.0.0.1 --port 1025 --to you@example.com --text "trap test"
 mailts send --alias welcome --to newuser@example.com
 ```
 
 | Option | Description |
 |---|---|
+| `--host` | Override configured SMTP host (e.g. `127.0.0.1` for a local trap) |
+| `--port` | Override configured SMTP port |
 | `--from` | Sender address (falls back to config) |
 | `--to` | Recipient address |
 | `--subject` | Subject line |

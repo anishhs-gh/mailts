@@ -28,7 +28,10 @@ export class SmtpServer {
 
   close(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.server.close(err => err ? reject(err) : resolve());
+      this.server.close(err => {
+        if (err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') reject(err);
+        else resolve();
+      });
     });
   }
 
