@@ -34,6 +34,8 @@ export type {
   QueueOptions,
   QueueJob,
   QueueStats,
+  JobPriority,
+  EnqueueOptions,
   RetryBackoff,
   LogLevel,
   LogEvent,
@@ -98,6 +100,11 @@ export { MailQueue } from './queue/MailQueue.js';
 export { RetryPolicy } from './queue/RetryPolicy.js';
 export { DeadLetterQueue } from './queue/DeadLetterQueue.js';
 export { SqliteQueue, resolveQueueDbPath } from './queue/SqliteQueue.js';
+export { JobController } from './queue/JobController.js';
+export type { ControlReason } from './queue/JobController.js';
+export { MailWorker } from './queue/MailWorker.js';
+export type { MailWorkerConfig } from './queue/MailWorker.js';
+export type { QueueDriver, DriverMessage } from './queue/QueueDriver.js';
 
 // Health
 export { HealthChecker } from './health/HealthChecker.js';

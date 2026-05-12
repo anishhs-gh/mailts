@@ -34,7 +34,7 @@ export class PostmarkTransport implements Transport {
     this.base = config.baseUrl ?? 'https://api.postmarkapp.com';
   }
 
-  async send(message: BuiltMessage, options: EmailOptions): Promise<TransportResult> {
+  async send(message: BuiltMessage, options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
     const from = toAddressStrings(options.from ?? message.from)[0] ?? message.from;
     const attachments = await resolveApiAttachments(options.attachments ?? []);
 
@@ -73,6 +73,7 @@ export class PostmarkTransport implements Transport {
         'Accept':                  'application/json',
       },
       body: JSON.stringify(payload),
+      signal,
     });
 
     if (res.status >= 400) {

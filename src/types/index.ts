@@ -42,6 +42,8 @@ export type {
   QueueOptions,
   QueueJob,
   QueueStats,
+  JobPriority,
+  EnqueueOptions,
 } from './queue.js';
 
 export type { LogLevel, LogPhase, LogDirection, LogEvent, LogFormat, LoggerOptions } from './logger.js';

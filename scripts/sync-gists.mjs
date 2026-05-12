@@ -131,6 +131,27 @@ const META = {
     run:         'npx vitest run trap-testing.test.ts',
     features:    ['useTrapServer() — start/stop trap around test suite', 'waitForMessage() — deterministic polling (no arbitrary sleeps)', 'Assert subject, HTML body, attachments', 'Zero external SMTP calls in CI'],
   },
+  'health-checks.ts': {
+    description: '@mailts/core — Health checks: SMTP + IMAP probe, latency, K8s liveness/readiness | typescript email health',
+    title:       'Health checks: SMTP + IMAP probe for K8s liveness/readiness',
+    install:     'npm install @mailts/core',
+    run:         'SMTP_USER=you@gmail.com SMTP_PASS=<app-password> npx tsx health-checks.ts',
+    features:    ['mail.health() — pings SMTP (EHLO + NOOP) and IMAP, measures latency', 'Structured HealthResult (ok, latencyMs, error per service)', 'K8s liveness/readiness HTTP probe example', 'HealthChecker standalone usage (SMTP-only or IMAP-only)', 'Zero extra dependencies — uses existing config'],
+  },
+  'queue-lifecycle.ts': {
+    description: '@mailts/core — Queue lifecycle: priority scheduling, play/pause, cancel, interrupt, abort, shutdown | typescript email queue',
+    title:       'Queue lifecycle: priority, pause, cancel, interrupt, abort',
+    install:     'npm install @mailts/core',
+    run:         'npx tsx queue-lifecycle.ts',
+    features:    ['Priority scheduling (critical → high → normal → low)', 'pause() / play() — stop and restart the queue', 'cancel(jobId) — remove permanently, no retry', 'interrupt(jobId) — requeue at front, attempt counter unchanged', 'abort(jobId) — force-fail, retry/DLQ applies', 'shutdown(timeoutMs) — graceful drain with abort timeout'],
+  },
+  'mail-worker-redis.ts': {
+    description: '@mailts/core — MailWorker + Redis: external queue persistence with full lifecycle control | typescript email queue redis',
+    title:       'MailWorker + Redis: external persistence, full lifecycle control',
+    install:     'npm install @mailts/core ioredis',
+    run:         'REDIS_URL=redis://localhost:6379 SMTP_PASS=<pass> npx tsx mail-worker-redis.ts',
+    features:    ['QueueDriver interface — dequeue / ack / nack', 'Redis BRPOPLPUSH reliable queue pattern (survives crash)', 'MailWorker bridges external persistence with MailQueue lifecycle', 'pause() — stops pulling from Redis AND stops queue execution', 'resume() — restarts both consumer loop and queue', 'Graceful shutdown with SIGTERM handler'],
+  },
 };
 
 // ── Import rewriting ─────────────────────────────────────────────────────────

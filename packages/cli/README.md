@@ -87,15 +87,31 @@ mailts read --mailbox "Sent"
 
 ### `queue`
 
-Manage the in-process send queue.
+Manage the send queue. Requires `queue.persist` in config for cross-process commands (`cancel`, `interrupt`, `abort`) — the running app acts within 5 s.
 
 ```bash
-mailts queue status          # print counters
-mailts queue status --json   # machine-readable JSON
-mailts queue drain           # block until queue is empty
-mailts queue dlq list        # list dead-letter jobs
-mailts queue dlq retry <id>  # re-enqueue a dead job
+mailts queue status                # print counters (pending/running/succeeded/dead/cancelled)
+mailts queue status --json         # machine-readable JSON
+mailts queue cancel <job-id>       # cancel a pending or running job
+mailts queue interrupt <job-id>    # interrupt a running job — returns it to front of queue
+mailts queue abort <job-id>        # abort a running job — counts as failed attempt
+mailts queue drain                 # in-process only: block until queue is empty
+mailts queue dlq list              # list dead-letter jobs
+mailts queue dlq list --json       # machine-readable JSON
+mailts queue dlq retry <id>        # re-enqueue a dead job
+mailts queue dlq clear             # clear the dead-letter queue
 ```
+
+| Subcommand | Needs `persist`? | Description |
+|-----------|-----------------|-------------|
+| `status` | Yes | Show queue counters |
+| `cancel <id>` | Yes | Cancel pending or running job |
+| `interrupt <id>` | Yes | Return running job to queue without counting the attempt |
+| `abort <id>` | Yes | Force-fail running job; retry/DLQ apply |
+| `drain` | — | In-process drain signal (informational only via CLI) |
+| `dlq list` | Yes | List dead-letter jobs |
+| `dlq retry <id>` | Yes | Re-enqueue a dead job |
+| `dlq clear` | Yes | Clear the dead-letter queue |
 
 ### `trap`
 

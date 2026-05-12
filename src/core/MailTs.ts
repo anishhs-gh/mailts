@@ -158,12 +158,14 @@ export class MailTs {
     } else {
       q = new MailQueue(this.queueOpts, this.logger);
     }
-    q.setSendFn((opts) => this.sendDirect(opts));
+    q.setSendFn((opts, signal) => this.sendDirect(opts, signal));
 
-    if (this.hooks.onQueueEnqueue) q.on('enqueued', this.hooks.onQueueEnqueue);
-    if (this.hooks.onQueueSuccess) q.on('success',  this.hooks.onQueueSuccess);
-    if (this.hooks.onQueueDead)   q.on('dead',      this.hooks.onQueueDead);
-    if (this.hooks.onQueueRetry)  q.on('retry',     (job, attempt, delay) => this.hooks.onQueueRetry!(job, attempt, delay));
+    if (this.hooks.onQueueEnqueue)     q.on('enqueued',    this.hooks.onQueueEnqueue);
+    if (this.hooks.onQueueSuccess)     q.on('success',     this.hooks.onQueueSuccess);
+    if (this.hooks.onQueueDead)        q.on('dead',        this.hooks.onQueueDead);
+    if (this.hooks.onQueueRetry)       q.on('retry',       (job, attempt, delay) => this.hooks.onQueueRetry!(job, attempt, delay));
+    if (this.hooks.onQueueCancelled)   q.on('cancelled',   this.hooks.onQueueCancelled);
+    if (this.hooks.onQueueInterrupted) q.on('interrupted', this.hooks.onQueueInterrupted);
 
     this._queue = q;
   }
@@ -309,7 +311,16 @@ export class MailTs {
     return this.sendDirect(options);
   }
 
-  private async sendDirect(options: EmailOptions): Promise<SendResult> {
+  /**
+   * Send immediately — bypasses the internal queue and threads `signal` directly
+   * to the transport layer. Middleware is **not** run. Used by `MailWorker`
+   * and available for advanced callers that manage their own concurrency.
+   */
+  dispatch(options: EmailOptions, signal?: AbortSignal): Promise<SendResult> {
+    return this.sendDirect(options, signal);
+  }
+
+  private async sendDirect(options: EmailOptions, signal?: AbortSignal): Promise<SendResult> {
     const t0 = Date.now();
     try {
       const built = await buildMessage(options);
@@ -321,29 +332,35 @@ export class MailTs {
       if (this.transportOverride) {
         const transport = this.transportOverride;
         this.logger.debug('core', `Sending via ${transport.name} (${raw.length} bytes)`);
-        const r = await transport.send(message, options);
+        const r = await transport.send(message, options, signal);
         this.logger.info('core', `Message sent (${r.messageId})`);
         result = { ok: true, messageId: r.messageId, accepted: r.accepted, rejected: r.rejected };
       } else if (this.poolingDisabled) {
         const client = new SmtpClient(this.requireSmtpConfig(), this.logger);
         await client.connect();
+        const onAbort = (): void => { client.destroy(); };
+        signal?.addEventListener('abort', onAbort, { once: true });
         try {
           this.logger.debug('smtp', `Sending message (${raw.length} bytes) to ${built.to.join(', ')}`);
           const serverId = await client.sendMessage(built.from, built.to, raw);
           this.logger.info('smtp', `Message sent (${built.messageId}) — server id: ${serverId}`);
           result = { ok: true, messageId: built.messageId, accepted: built.to, rejected: [] };
         } finally {
+          signal?.removeEventListener('abort', onAbort);
           await client.quit().catch(() => {});
         }
       } else {
         const pool = this.requireSmtp();
-        const client = await pool.acquire();
+        const client = await pool.acquire(signal);
+        const onAbort = (): void => { client.destroy(); };
+        signal?.addEventListener('abort', onAbort, { once: true });
         try {
           this.logger.debug('smtp', `Sending message (${raw.length} bytes) to ${built.to.join(', ')}`);
           const serverId = await client.sendMessage(built.from, built.to, raw);
           this.logger.info('smtp', `Message sent (${built.messageId}) — server id: ${serverId}`);
           result = { ok: true, messageId: built.messageId, accepted: built.to, rejected: [] };
         } finally {
+          signal?.removeEventListener('abort', onAbort);
           pool.release(client);
         }
       }
@@ -493,8 +510,13 @@ export class MailTs {
    * Gracefully drain the queue and close all pooled SMTP connections.
    * Await this before process exit to ensure in-flight messages are delivered.
    */
-  async shutdown(): Promise<void> {
-    if (this._queue) await this._queue.drain();
+  /**
+   * Gracefully drain the queue and close all pooled SMTP connections.
+   * Await this before process exit to ensure in-flight messages are delivered.
+   * @param queueTimeoutMs - If provided, running queue jobs are aborted after this many ms.
+   */
+  async shutdown(queueTimeoutMs?: number): Promise<void> {
+    if (this._queue) await this._queue.shutdown(queueTimeoutMs);
     if (this.pool) await this.pool.drain();
     this.logger.info('core', 'MailTs shutdown complete');
   }

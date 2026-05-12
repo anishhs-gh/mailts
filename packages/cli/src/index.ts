@@ -1,4 +1,5 @@
 import { parseArgs } from 'util';
+import { readFileSync } from 'fs';
 import { testSmtp } from './commands/test.js';
 import { sendEmail } from './commands/send.js';
 import { readMail } from './commands/read.js';
@@ -7,7 +8,11 @@ import { queueCommand } from './commands/queue.js';
 import { trapCommand } from './commands/trap.js';
 import { printError } from './prompt.js';
 
-const VERSION = '0.1.5';
+declare const __CLI_VERSION__: string | undefined;
+// Replaced by esbuild define at build time; falls back to package.json when run via tsx directly.
+const VERSION: string = typeof __CLI_VERSION__ !== 'undefined'
+  ? __CLI_VERSION__
+  : (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 const HELP = `
 mailts — Modern SMTP/IMAP CLI  v${VERSION}
@@ -50,8 +55,11 @@ READ OPTIONS
   --unseen                      Show only unread messages
 
 QUEUE SUBCOMMANDS
-  queue status [--json]         Print pending / running / succeeded / dead counts
-  queue drain                   Wait until all enqueued jobs finish
+  queue status [--json]         Print pending / running / succeeded / dead / cancelled counts
+  queue cancel <job-id>         Cancel a pending or running job (cross-process, ≤5 s)
+  queue interrupt <job-id>      Interrupt a running job — returns it to the queue
+  queue abort <job-id>          Abort a running job — counts as a failed attempt
+  queue drain                   Wait until all enqueued jobs finish (in-process)
   queue dlq list [--json]       List jobs in the dead-letter queue
   queue dlq retry <job-id>      Re-enqueue a dead-letter job
 
@@ -193,6 +201,9 @@ async function main(): Promise<void> {
           const dlqSub = positionals[0] ?? 'list';
           const jobId  = positionals[1];
           await queueCommand({ subcommand: 'dlq', jobId: dlqSub === 'retry' ? jobId : undefined, json: values['json'] as boolean | undefined });
+        } else if (sub === 'cancel' || sub === 'interrupt' || sub === 'abort') {
+          const jobId = positionals[0] ?? rest[1]; // support both `queue cancel <id>` forms
+          await queueCommand({ subcommand: sub, jobId, json: values['json'] as boolean | undefined });
         } else {
           await queueCommand({ subcommand: sub, json: values['json'] as boolean | undefined });
         }
