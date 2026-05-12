@@ -29,7 +29,7 @@ export class SendGridTransport implements Transport {
     this.base = config.baseUrl ?? 'https://api.sendgrid.com';
   }
 
-  async send(message: BuiltMessage, options: EmailOptions): Promise<TransportResult> {
+  async send(message: BuiltMessage, options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
     const fromObj = toAddressObjects(options.from ?? message.from)[0] ?? { email: message.from };
     const attachments = await resolveApiAttachments(options.attachments ?? []);
 
@@ -77,6 +77,7 @@ export class SendGridTransport implements Transport {
         'Content-Type':  'application/json',
       },
       body: JSON.stringify(payload),
+      signal,
     });
 
     if (res.status >= 400) {

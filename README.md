@@ -388,50 +388,146 @@ await session.close();
 
 ## Queue
 
-Use `mail.queue` for fire-and-forget sending with automatic retries.
+Use `mail.queue` for fire-and-forget sending with automatic retries, priority scheduling, and full lifecycle control.
 
 ```ts
 const mail = new MailTs({
   smtp: { ... },
   queue: {
-    concurrency: 5,        // parallel sends
-    maxRetries: 3,         // retries per job (1 initial + 3 retries = 4 total attempts)
-    retryDelay: 1_000,     // base delay (ms)
-    retryBackoff: 'exponential', // 'exponential' | 'linear' | 'fixed'
-    jitter: true,          // ±30% randomisation to avoid thundering-herd
-    jobTimeout: 30_000,    // abort a hung send after 30 s (treated as transient, triggers retry)
+    concurrency: 5,             // parallel sends
+    maxRetries: 3,              // retries per job
+    retryDelay: 1_000,          // base delay (ms)
+    retryBackoff: 'exponential',
+    jitter: true,
+    jobTimeout: 30_000,
     deadLetter: { enabled: true },
+    defaultPriority: 'normal',  // 'critical' | 'high' | 'normal' | 'low'
   },
 });
 
-// Enqueue without awaiting
+// Enqueue with optional priority
 mail.queue.enqueue({ to: 'user@example.com', subject: 'Hi', text: 'Hello' });
+mail.queue.enqueue({ to: 'vip@example.com',  subject: 'VIP', text: 'Hi!' }, { priority: 'critical' });
 
-// Wait until all enqueued jobs finish
+// Wait until all jobs finish
 await mail.queue.drain();
+```
 
-// Inspect dead-letter queue
-const failed = mail.queue.dlq.getAll();
-for (const job of failed) {
-  console.log(job.id, job.errors.at(-1)?.message);
-  mail.queue.dlq.retry(job.id);  // re-enqueue
-}
+### Priority scheduling
+
+Jobs are processed in tier order: `critical` → `high` → `normal` → `low`. Within the same tier, FIFO ordering is preserved.
+
+### Lifecycle control
+
+```ts
+// Play / pause
+mail.queue.pause();             // stop dispatching new jobs (in-flight jobs finish)
+mail.queue.play();              // resume — alias for resume()
+
+// Cancel — remove permanently, no retry, no DLQ
+mail.queue.cancel(jobId);       // pending or running job
+mail.queue.cancelAll();         // all pending jobs; returns count
+
+// Interrupt — return to front of queue, attempt counter NOT incremented
+mail.queue.interrupt(jobId);    // running job only
+mail.queue.interruptAll();
+
+// Abort — count as a failed attempt; retry policy and DLQ apply
+mail.queue.abort(jobId);        // running job only
+mail.queue.abortAll();
+
+// Graceful shutdown
+await mail.queue.shutdown();            // pause + cancelAll + wait for running
+await mail.queue.shutdown(5_000);       // same, but abort stragglers after 5 s
 ```
 
 ### Queue events
 
 ```ts
-mail.queue.on('success', (job, result) => { ... });
-mail.queue.on('retry',   (job, attempt, delay) => { ... });
-mail.queue.on('dead',    (job) => { ... });
+mail.queue.on('success',     (job, result) => { ... });
+mail.queue.on('retry',       (job, attempt, delay) => { ... });
+mail.queue.on('dead',        (job) => { ... });
+mail.queue.on('cancelled',   (job) => { ... });
+mail.queue.on('interrupted', (job) => { ... });
 ```
 
-### Pause / resume
+### Stats
 
 ```ts
-mail.queue.pause();   // stops dispatching new jobs
-mail.queue.resume();  // resumes from where it stopped
+const { pending, running, succeeded, dead, cancelled } = mail.queue.stats();
 ```
+
+---
+
+## MailWorker — external queue + lifecycle control
+
+Use `MailWorker` when persistence lives outside your process (Redis, SQS, Cloud Tasks, BullMQ, database poll, …) but you still want full lifecycle control: play / pause / cancel / interrupt / abort.
+
+Implement the `QueueDriver` interface for your backend — three methods — and pass it to `MailWorker`. Everything else is automatic.
+
+```ts
+import { MailWorker } from '@mailts/core';
+import type { QueueDriver, DriverMessage } from '@mailts/core';
+
+// ── 1. Implement your backend ─────────────────────────────────────────────
+class RedisDriver implements QueueDriver {
+  async dequeue(): Promise<DriverMessage | null> {
+    const raw = await redis.brpoplpush('mail:pending', 'mail:inflight', 1);
+    return raw ? JSON.parse(raw) : null;
+  }
+  async ack(id: string)  { await redis.lrem('mail:inflight', 1, id); }
+  async nack(id: string) { await redis.lmove('mail:inflight', 'mail:dlq', 'LEFT', 'RIGHT'); }
+}
+
+// ── 2. Create the worker ──────────────────────────────────────────────────
+const worker = new MailWorker(new RedisDriver(), {
+  smtp: { host: 'smtp.example.com', port: 587, auth: { type: 'plain', user: '…', pass: '…' } },
+  queue: { concurrency: 5, maxRetries: 3, defaultPriority: 'normal' },
+});
+
+worker.on('success',     (job) => console.log('sent',       job.id));
+worker.on('dead',        (job) => console.error('dead',     job.id));  // nack called automatically
+worker.on('cancelled',   (job) => console.log('cancelled',  job.id));
+worker.on('interrupted', (job) => console.log('interrupted',job.id));
+
+await worker.start();
+
+// ── 3. Full lifecycle control ─────────────────────────────────────────────
+worker.pause();              // stop pulling from Redis AND stop queue
+worker.resume();             // restart both
+
+worker.cancel(jobId);        // cancel a specific in-flight job
+worker.interrupt(jobId);     // requeue at front, no penalty
+worker.abort(jobId);         // force-fail → retry/DLQ
+
+await worker.shutdown(5_000); // graceful drain, abort stragglers after 5 s
+```
+
+### How ack / nack work
+
+| Event | Called | Meaning |
+|---|---|---|
+| `success` | `driver.ack(id)` | Remove from external queue |
+| `dead` | `driver.nack(id, lastError)` | Move to external DLQ or delete |
+| `cancelled` | — | Job never reached the transport; stays in external queue |
+
+### QueueDriver interface
+
+```ts
+interface QueueDriver<T = EmailOptions> {
+  dequeue(): Promise<DriverMessage<T> | null>;  // return null when idle (long-poll inside)
+  ack(id: string): Promise<void>;
+  nack(id: string, reason?: Error): Promise<void>;
+}
+
+interface DriverMessage<T = EmailOptions> {
+  id: string;            // external message ID used for ack/nack
+  data: T;               // EmailOptions payload
+  priority?: JobPriority;
+}
+```
+
+See `examples/mail-worker-redis.ts` for a complete working Redis example.
 
 ---
 

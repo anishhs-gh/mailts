@@ -3,6 +3,37 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.3.0] — 2026-05-12
+
+### Added
+- **Priority scheduling** — `enqueue(options, { priority: 'critical' | 'high' | 'normal' | 'low' })`. Jobs are drained critical → high → normal → low. `QueueOptions.defaultPriority` sets the instance-wide default. `QueueJob.priority` is always present (defaults to `'normal'`).
+- **`JobController`** — reason-aware `AbortController` attached to each running job. Exported as `JobController` / `ControlReason` from the main entry point and `@mailts/core/queue`.
+- **`MailQueue.play()`** — alias for `resume()`.
+- **`MailQueue.cancel(jobId)`** — cancel a pending or running job. Pending: removed immediately. Running: abort signal sent, job stops after the current send attempt.
+- **`MailQueue.cancelAll()`** — cancel all pending jobs; returns the count removed.
+- **`MailQueue.interrupt(jobId)`** — interrupt a running job; it is returned to the **front** of its priority bucket without the attempt counter being incremented.
+- **`MailQueue.interruptAll()`** — interrupt all running jobs.
+- **`MailQueue.abort(jobId)`** — abort a running job; counts as a failed attempt and feeds into the normal retry / DLQ policy.
+- **`MailQueue.abortAll()`** — abort all running jobs.
+- **`MailQueue.shutdown(timeoutMs?)`** — graceful stop: pause, cancel pending, wait for running. If `timeoutMs` is provided and exceeded, remaining running jobs are aborted.
+- **`MailQueue` events** — `'cancelled'` `(job)` and `'interrupted'` `(job)`.
+- **`QueueStats.cancelled`** — count of jobs removed via cancel since the instance started.
+- **`TelemetryHooks.onQueueCancelled`** and **`onQueueInterrupted`** — optional hooks for new events.
+- **`SqliteQueue` cross-process control** — `SqliteQueue.requestCancel(dbPath, jobId)`, `requestInterrupt`, `requestAbort` static methods write to a new `queue_control` table; the running app processes them within 5 s via its existing poll loop.
+- **AbortSignal threading** — `Transport.send(message, options, signal?)` gains an optional third parameter. All six built-in transports (SMTP, Mailgun, Postmark, SES, SendGrid, Resend) pass the signal to the underlying connection / `http.request`. `SmtpPool.acquire(signal?)` rejects immediately if aborted while waiting for a pool slot.
+- **`MailTs.shutdown(queueTimeoutMs?)`** — forwards the optional timeout to `queue.shutdown()`.
+- **`QueueDriver<T>` interface** — three-method contract (`dequeue`, `ack`, `nack`) for bridging any external queue backend (Redis, SQS, Cloud Tasks, BullMQ, database poll, …) with `MailQueue`'s lifecycle controls.
+- **`DriverMessage<T>` interface** — typed envelope returned by `QueueDriver.dequeue()`: `{ id, data, priority? }`. The `id` is the external message identifier used for ack/nack; the queue generates its own internal job IDs.
+- **`MailWorker`** — bridges a `QueueDriver` with an internal `MailQueue`. External system owns persistence; `MailWorker` owns execution: concurrency, priority scheduling, retry, play/pause/cancel/interrupt/abort. `ack()` is called on the driver on success; `nack()` on permanent failure (DLQ).
+- **`MailWorkerConfig`** — `MailTsConfig` minus `queue.persist` (persistence is the driver's responsibility). Accepts all SMTP/transport/telemetry/logger config plus `queue` execution options.
+- **`MailTs.dispatch(options, signal?)`** — public low-level send that bypasses the internal queue and threads `AbortSignal` directly to the transport. Used by `MailWorker`; available for advanced callers managing their own concurrency.
+- New examples: `examples/queue-lifecycle.ts` — demonstrates all five lifecycle operations; `examples/mail-worker-redis.ts` — complete Redis reliable-queue pattern with producer, consumer, pause/resume, and graceful shutdown.
+
+### Changed
+- `QueueJob.status` union extended with `'cancelled'` — additive, existing exhaustive checks may need updating.
+- `MailQueue.enqueue()` accepts an optional second argument `EnqueueOptions { priority? }` — fully backward-compatible.
+- `SqliteQueue` schema auto-migrates existing databases on open: adds `priority TEXT DEFAULT 'normal'` and `cancelled_at TEXT` columns, and creates the `queue_control` table if absent.
+
 ## [0.2.0] — 2026-05-06
 
 ### Added

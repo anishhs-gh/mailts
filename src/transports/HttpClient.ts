@@ -7,6 +7,8 @@ export interface HttpRequest {
   url: string;
   headers: Record<string, string>;
   body?: Buffer | string;
+  /** Optional abort signal — aborts the in-flight HTTP request. */
+  signal?: AbortSignal;
 }
 
 export interface HttpResponse {
@@ -35,6 +37,7 @@ export function httpRequest(opts: HttpRequest): Promise<HttpResponse> {
           ...opts.headers,
           ...(bodyBuf ? { 'Content-Length': String(bodyBuf.length) } : {}),
         },
+        signal: opts.signal,
       },
       (res) => {
         const chunks: Buffer[] = [];

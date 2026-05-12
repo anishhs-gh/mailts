@@ -55,7 +55,8 @@ export async function queueCommand(args: QueueArgs): Promise<void> {
         `  Pending:   ${stats.pending}\n` +
         `  Running:   ${stats.running}\n` +
         `  Succeeded: ${stats.succeeded}\n` +
-        `  Dead:      ${stats.dead}\n`,
+        `  Dead:      ${stats.dead}\n` +
+        `  Cancelled: ${stats.cancelled}\n`,
       );
       break;
     }
@@ -64,13 +65,41 @@ export async function queueCommand(args: QueueArgs): Promise<void> {
       printInfo('drain is not supported cross-process — jobs drain in the application process.');
       break;
 
+    case 'cancel': {
+      const id = args.jobId;
+      if (!id) { printError('Job ID required: mailts queue cancel <job-id>'); process.exitCode = 1; return; }
+      SqliteQueue.requestCancel(dbPath, id);
+      printSuccess(`Cancel request queued for job ${id}. The app will act within 5 s.`);
+      break;
+    }
+
+    case 'interrupt': {
+      const id = args.jobId;
+      if (!id) { printError('Job ID required: mailts queue interrupt <job-id>'); process.exitCode = 1; return; }
+      SqliteQueue.requestInterrupt(dbPath, id);
+      printSuccess(`Interrupt request queued for job ${id}. The app will act within 5 s.`);
+      break;
+    }
+
+    case 'abort': {
+      const id = args.jobId;
+      if (!id) { printError('Job ID required: mailts queue abort <job-id>'); process.exitCode = 1; return; }
+      SqliteQueue.requestAbort(dbPath, id);
+      printSuccess(`Abort request queued for job ${id}. The app will act within 5 s.`);
+      break;
+    }
+
+    case 'shutdown':
+      printInfo('Graceful shutdown is in-process only. Use SIGTERM or your app\'s shutdown API.');
+      break;
+
     case 'dlq':
       handleDlq(SqliteQueue, dbPath, args.jobId ? 'retry' : 'list', args);
       break;
 
     default:
       printError(`Unknown queue subcommand: ${subcommand}`);
-      printInfo('Available: status | drain | dlq [list|retry <job-id>|clear]');
+      printInfo('Available: status | cancel <id> | interrupt <id> | abort <id> | drain | dlq [list|retry <job-id>|clear]');
       process.exitCode = 1;
   }
 }
@@ -85,7 +114,7 @@ function handleDlq(SqliteQueue: typeof SqliteQueueType, dbPath: string, sub: str
       for (const job of jobs) {
         const lastErr = job.errors.at(-1)?.message ?? 'unknown error';
         process.stdout.write(
-          `  \x1b[31m${job.id}\x1b[0m  attempts=${job.attempts}  created=${job.createdAt.toISOString()}  error="${lastErr}"\n`,
+          `  \x1b[31m${job.id}\x1b[0m  priority=${job.priority}  attempts=${job.attempts}  created=${job.createdAt.toISOString()}  error="${lastErr}"\n`,
         );
       }
       break;

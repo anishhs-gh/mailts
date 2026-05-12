@@ -12,7 +12,7 @@ Complete guide for contributors and maintainers — from first clone through pub
 4. [Development Workflow](#4-development-workflow)
 5. [TypeScript Standards](#5-typescript-standards)
 6. [Testing Requirements](#6-testing-requirements)
-7. [Pre-Push Checklist](#7-pre-push-checklist)
+7. [Feature Delivery Checklist](#7-feature-delivery-checklist)
 8. [Branch & Commit Conventions](#8-branch--commit-conventions)
 9. [Pull Request Process](#9-pull-request-process)
 10. [Versioning](#10-versioning)
@@ -196,25 +196,134 @@ export default defineConfig({ test: { include: ['tests/**/*.test.ts'], globals: 
 
 ---
 
-## 7. Pre-Push Checklist
+## 7. Feature Delivery Checklist
 
-Run this before every `git push`, without exception:
+Use this end-to-end checklist for every non-trivial change. Copy it into your PR description and check items off as you go.
 
-```bash
-npm run typecheck    # zero TS errors across all packages
-npm test             # zero failing tests across all packages
-npm run build        # all dist/ artifacts produced cleanly
+---
+
+### Before you start coding
+
+- [ ] **Scope is clear** — write one sentence describing what changes and why. If you can't, narrow the scope first.
+- [ ] **Affected packages identified** — list every package whose source, tests, or docs will change.
+- [ ] **Backward compatibility assessed** — new params must be optional; new union members additive; no removed exports. If breaking, plan a major bump.
+- [ ] **Planning doc created** (optional for large features) — a `FEATURE_NAME.md` at repo root with a state machine, affected files table, and checklist. Remove it or convert it to a permanent doc after shipping.
+- [ ] **Existing tests read** — understand the test patterns in the affected area before writing code.
+
+---
+
+### While coding
+
+- [ ] Run `npm run test:core` (or workspace equivalent) after each meaningful change — don't let failures accumulate.
+- [ ] Keep new public API surface minimal — add only what the feature requires.
+- [ ] No `console.log` in library code — use `Logger` from `@mailts/core/logger`.
+- [ ] No hardcoded credentials, tokens, or file-system paths.
+- [ ] Imports use `.js` extensions (ESM requirement).
+
+---
+
+### After coding — code quality
+
+- [ ] `npm run typecheck` — zero errors across all packages
+- [ ] `npm run test` — zero failing tests across all packages
+- [ ] `npm run build` — all `dist/` artifacts produced cleanly
+- [ ] No `dist/` files staged for commit (they are gitignored)
+- [ ] No `file:` paths in `dependencies` (only in `devDependencies`)
+- [ ] No new `peerDependencies` without a matching `peerDependenciesMeta` entry
+
+---
+
+### After coding — tests
+
+- [ ] Every new public method or interface has at least one unit test covering the happy path
+- [ ] Error paths and edge cases are covered for non-trivial logic
+- [ ] No test files skipped or pending
+- [ ] Test file named `<Unit>.test.ts`, placed under `tests/unit/<area>/`
+
+---
+
+### After coding — documentation
+
+- [ ] **`CHANGELOG.md`** updated in every affected package
+  - Add entry under the correct version heading (`[X.Y.Z] — YYYY-MM-DD`)
+  - One bullet per user-visible change; group under `### Added`, `### Changed`, `### Fixed`
+  - Do **not** create a new version entry if the version hasn't been published yet — append to the current unreleased entry
+- [ ] **`README.md`** updated in every affected package
+  - New public API documented with a usage snippet
+  - New options added to relevant option tables
+  - New commands added to CLI command tables
+- [ ] **`QUEUE_LIFECYCLE.md`** (or equivalent planning doc) updated if it exists
+  - Checklist items marked complete
+  - New sections added for features not originally planned
+
+---
+
+### After coding — examples and gist sync
+
+- [ ] **New example file added** to `examples/` if the feature introduces a new usage pattern
+  - File name is descriptive and kebab-case (e.g. `mail-worker-redis.ts`)
+  - Example is self-contained and runnable with env vars documented at the top
+  - Imports use `../src/index.js` (the sync script rewrites them to `@mailts/core` in the gist)
+- [ ] **`scripts/sync-gists.mjs` updated** — add a `META` entry for every new example file:
+  ```js
+  'my-example.ts': {
+    description: '@mailts/core — <short description> | <searchable tags>',
+    title:       '<Human readable title>',
+    install:     'npm install @mailts/core',
+    run:         'ENV_VAR=value npx tsx my-example.ts',
+    features:    ['Feature one', 'Feature two'],
+  },
+  ```
+  Without a `META` entry the sync script logs `skip` and the gist is never created or updated.
+
+---
+
+### After coding — versioning
+
+| Scenario | Action |
+|---|---|
+| Feature not yet published (current version still in development) | Append to existing `CHANGELOG` entry. Do **not** bump `package.json`. |
+| Feature is the first change since last publish | Bump `package.json` version (patch / minor / major). Add new `CHANGELOG` entry with today's date. |
+| Multiple packages affected | Bump each package independently. Widen peer dependency floor in dependents if new API is required. |
+| No user-visible change (internal refactor, test-only) | No version bump. No `CHANGELOG` entry. |
+
+Version bump rules:
+
+| Change type | Bump |
+|---|---|
+| Bug fix, internal refactor, test, docs | patch |
+| New export, new option, new command | minor |
+| Removed export, changed signature, renamed type | major |
+
+#### `@mailts/cli` — version is injected at build time
+
+The CLI version is **not** hardcoded in source. `tsup.config.ts` reads `package.json` at build time and injects it as `__CLI_VERSION__` via esbuild `define`. The only file you need to edit when bumping the CLI version is:
+
+```
+packages/cli/package.json  →  "version": "X.Y.Z"
 ```
 
-Additionally verify:
+`packages/cli/src/index.ts` uses `declare const __CLI_VERSION__: string` — this is replaced by the real value during `npm run build`. You never need to touch `src/index.ts` for a version bump.
 
-- [ ] No `console.log` left in library code (use the `Logger` from `@mailts/core/logger`)
-- [ ] No hardcoded credentials, tokens, or secrets anywhere in source or tests
-- [ ] No `file:` paths added as `dependencies` (only allowed in `devDependencies`)
-- [ ] No new `peerDependencies` added without updating `peerDependenciesMeta`
-- [ ] `dist/` directories are in `.gitignore` and not committed
-- [ ] New public API surfaces have corresponding tests
-- [ ] `package.json` version in the affected package is bumped if this is a release PR
+---
+
+### After coding — cross-package sync
+
+- [ ] If `@mailts/core` adds a new export used by `@mailts/cli`: bump `@mailts/cli`'s peer floor and minor version
+- [ ] If `@mailts/core` adds a new export used by `@mailts/trap`: same
+- [ ] If a new `@mailts/cli` subcommand calls new core API: CLI `CHANGELOG` entry added, CLI version bumped
+- [ ] `packages/cli/src/index.ts` HELP text updated if new CLI commands added
+- [ ] If the CLI `VERSION` constant was bumped, it must match `packages/cli/package.json`
+
+---
+
+### Pre-push final gate
+
+```bash
+npm run typecheck && npm test && npm run build
+```
+
+All three must be green. Do not push if any fails.
 
 ---
 
@@ -456,7 +565,7 @@ npm install
 npm run dev                              # watch root
 npm run dev --workspace=packages/trap   # watch a package
 
-# Validate before push
+# Validate before push (all three must be green)
 npm run typecheck && npm test && npm run build
 
 # Release (example: @mailts/core 1.2.0)
@@ -464,4 +573,14 @@ npm run typecheck && npm test && npm run build
 # 2. git tag '@mailts/core@1.2.0' && git push origin '@mailts/core@1.2.0'
 # 3. Watch https://github.com/anishhs-gh/mailts/actions
 # 4. Verify on npmjs.com/package/@mailts/core
+```
+
+### Feature delivery — short form
+
+```
+Before:  scope clear → backward-compat assessed → planning doc (if large)
+During:  test:core after each change → no console.log → .js imports
+After:   typecheck + test + build → tests written → CHANGELOG → README
+         → version bump (only if published) → examples + sync-gists.mjs
+         → cross-package peer ranges → final gate
 ```

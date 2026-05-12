@@ -37,7 +37,7 @@ export class SesTransport implements Transport {
 
   constructor(private config: SesConfig) {}
 
-  async send(message: BuiltMessage, _options: EmailOptions): Promise<TransportResult> {
+  async send(message: BuiltMessage, _options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
     const { region } = this.config;
     const url = `https://email.${region}.amazonaws.com/v2/email/outbound-emails`;
 
@@ -52,7 +52,7 @@ export class SesTransport implements Transport {
 
     const headers = await this.sign('POST', url, body);
 
-    const res = await httpRequest({ method: 'POST', url, headers, body });
+    const res = await httpRequest({ method: 'POST', url, headers, body, signal });
 
     if (res.status >= 400) {
       throw new Error(`SES error ${res.status}: ${res.body}`);

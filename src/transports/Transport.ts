@@ -15,6 +15,8 @@ export interface Transport {
    * Transmit the message using the underlying provider.
    * @param message - Pre-built MIME message with raw buffer, from, to, and messageId.
    * @param options - Original `EmailOptions` — useful for provider-specific fields.
+   * @param signal  - Optional `AbortSignal`; when aborted the in-flight request is cancelled.
+   *                  Existing implementations that do not declare this parameter continue to work.
    */
-  send(message: BuiltMessage, options: EmailOptions): Promise<TransportResult>;
+  send(message: BuiltMessage, options: EmailOptions, signal?: AbortSignal): Promise<TransportResult>;
 }

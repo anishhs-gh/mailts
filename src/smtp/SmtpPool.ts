@@ -49,8 +49,10 @@ export class SmtpPool extends EventEmitter {
    * Lease a ready `SmtpClient` from the pool.
    * Establishes a new connection if under `maxConnections`; otherwise queues the request.
    * Always call `release()` when done.
+   * @param signal - Optional abort signal; rejects immediately if aborted while waiting.
    */
-  async acquire(): Promise<SmtpClient> {
+  async acquire(signal?: AbortSignal): Promise<SmtpClient> {
+    if (signal?.aborted) throw new SmtpConnError('Pool acquire aborted');
     if (this.closing) throw new SmtpConnError('Pool is closing');
 
     // Find an idle, ready client
@@ -86,7 +88,13 @@ export class SmtpPool extends EventEmitter {
 
     // Wait for a connection to become available
     return new Promise((resolve, reject) => {
-      this.waiting.push({ resolve, reject });
+      const slot: WaitingSlot = { resolve, reject };
+      this.waiting.push(slot);
+      signal?.addEventListener('abort', () => {
+        const idx = this.waiting.indexOf(slot);
+        if (idx !== -1) this.waiting.splice(idx, 1);
+        reject(new SmtpConnError('Pool acquire aborted'));
+      }, { once: true });
     });
   }
 

@@ -3,6 +3,18 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.1.6] — 2026-05-12
+
+### Added
+- `mailts queue cancel <job-id>` — write a cancel request to the SQLite `queue_control` table; the running app acts within 5 s. Requires `queue.persist` in config.
+- `mailts queue interrupt <job-id>` — interrupt a running job, returning it to the front of its priority bucket without counting the attempt.
+- `mailts queue abort <job-id>` — abort a running job; normal retry / DLQ policy applies.
+- `mailts queue status` now shows a `Cancelled` row in addition to the existing counters.
+- DLQ list now shows `priority=` field per job.
+
+### Changed
+- Requires `@mailts/core >= 0.3.0` for priority and lifecycle control features.
+
 ## [0.1.5] — 2026-05-09
 
 ### Added

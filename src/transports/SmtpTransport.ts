@@ -17,13 +17,16 @@ export class SmtpTransport implements Transport {
     this.pool = new SmtpPool(config, logger);
   }
 
-  async send(message: BuiltMessage, _options: EmailOptions): Promise<TransportResult> {
-    const client = await this.pool.acquire();
+  async send(message: BuiltMessage, _options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
+    const client = await this.pool.acquire(signal);
+    const onAbort = (): void => { client.destroy(); };
+    signal?.addEventListener('abort', onAbort, { once: true });
     try {
       await client.sendMessage(message.from, message.to, message.raw);
       return { messageId: message.messageId, accepted: message.to, rejected: [] };
     } finally {
-      this.pool.release(client);
+      signal?.removeEventListener('abort', onAbort);
+      this.pool.release(client);  // no-op if client was already destroyed and removed
     }
   }
 

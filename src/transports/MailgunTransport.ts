@@ -45,7 +45,7 @@ export class MailgunTransport implements Transport {
     this.base = config.baseUrl ?? `https://${host}`;
   }
 
-  async send(message: BuiltMessage, _options: EmailOptions): Promise<TransportResult> {
+  async send(message: BuiltMessage, _options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
     const boundary = randomBytes(16).toString('hex');
 
     // Use the messages.mime endpoint — pass the raw RFC 5322 message as-is
@@ -69,6 +69,7 @@ export class MailgunTransport implements Transport {
         'Content-Type':  `multipart/form-data; boundary=${boundary}`,
       },
       body,
+      signal,
     });
 
     if (res.status >= 400) {

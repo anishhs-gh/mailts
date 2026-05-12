@@ -69,9 +69,19 @@ export class RetryPolicy {
     return Math.floor(delay);
   }
 
-  /** Resolves after the computed delay for `attempt`. */
-  async wait(attempt: number): Promise<void> {
+  /**
+   * Resolves after the computed delay for `attempt`.
+   * Rejects immediately with an `AbortError` if `signal` is aborted before the delay elapses.
+   */
+  async wait(attempt: number, signal?: AbortSignal): Promise<void> {
     const ms = this.delayFor(attempt);
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+      const timer = setTimeout(resolve, ms);
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      }, { once: true });
+    });
   }
 }
