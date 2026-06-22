@@ -67,6 +67,19 @@ export function parseFetchResponse(seq: number, data: string): Partial<ImapMessa
   return msg;
 }
 
+/**
+ * Extract raw bytes for a specific BODY[section] from a FETCH response data string.
+ * Returns null if the section is not present in this response.
+ */
+export function parseSectionResponse(data: string, section: string): Buffer | null {
+  const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`\\bBODY(?:\\.PEEK)?\\[${escaped}\\][^{]*\\{(\\d+)\\}\\r?\\n([\\s\\S]+)`, 'i');
+  const m = data.match(re);
+  if (!m) return null;
+  const len = parseInt(m[1]!, 10);
+  return Buffer.from(m[2]!.slice(0, len), 'binary');
+}
+
 // ── MIME body parser ───────────────────────────────────────────────────────
 
 interface ParsedBody {

@@ -3,7 +3,9 @@ import * as tls from 'tls';
 import { EventEmitter } from 'events';
 import { ImapParser, type ImapResponse } from './ImapParser.js';
 import { ImapCmd, type ImapSearchQuery } from './ImapCommands.js';
-import { parseFetchResponse } from './ImapFetch.js';
+import { parseFetchResponse, parseSectionResponse } from './ImapFetch.js';
+import { parseBodyStructure } from './ImapBodyStructure.js';
+import type { BodyNode } from './ImapBodyStructure.js';
 import { Credential } from '../core/Credential.js';
 import type { Logger } from '../logger/Logger.js';
 import type {
@@ -428,6 +430,78 @@ export class ImapClient extends EventEmitter {
       this.clearUntagged();
       await this.rawCommand(ImapCmd.uidFetch(uids.join(','), items));
       return this.collectFetchResults();
+    });
+  }
+
+  /**
+   * Fetch BODYSTRUCTURE for a set of UIDs.
+   * Returns a map of UID → parsed BodyNode tree.
+   */
+  async fetchBodyStructure(uids: number[]): Promise<Map<number, BodyNode>> {
+    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
+    if (uids.length === 0) return new Map();
+    return this.serialized(async () => {
+      this.clearUntagged();
+      await this.rawCommand(ImapCmd.uidFetchBodyStructure(uids.join(',')));
+      const result = new Map<number, BodyNode>();
+      for (const r of this.untaggedBuffer) {
+        if (!/FETCH/i.test(r.data)) continue;
+        const uidMatch = r.data.match(/\bUID\s+(\d+)/i);
+        const bsMatch = r.data.match(/\bBODYSTRUCTURE\s+(\([\s\S]+)/i);
+        if (!uidMatch || !bsMatch) continue;
+        const uid = parseInt(uidMatch[1]!, 10);
+        try {
+          result.set(uid, parseBodyStructure(bsMatch[1]!));
+        } catch { /* malformed — skip */ }
+      }
+      return result;
+    });
+  }
+
+  /**
+   * Fetch a single body section for a UID as raw bytes.
+   * Uses BODY.PEEK so it never sets \\Seen.
+   */
+  async fetchSection(uid: number, section: string): Promise<Buffer> {
+    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
+    return this.serialized(async () => {
+      this.clearUntagged();
+      await this.rawCommand(ImapCmd.uidFetchSection(String(uid), section));
+      for (const r of this.untaggedBuffer) {
+        const buf = parseSectionResponse(r.data, section);
+        if (buf !== null) return buf;
+      }
+      return Buffer.alloc(0);
+    });
+  }
+
+  /**
+   * Fetch multiple body sections for a set of UIDs in one round-trip.
+   * Returns a map of UID → (section → raw bytes).
+   */
+  async fetchSections(
+    uids: number[],
+    sections: string[],
+  ): Promise<Map<number, Map<string, Buffer>>> {
+    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
+    if (uids.length === 0 || sections.length === 0) return new Map();
+    return this.serialized(async () => {
+      this.clearUntagged();
+      await this.rawCommand(ImapCmd.uidFetchSections(uids.join(','), sections));
+      const result = new Map<number, Map<string, Buffer>>();
+      for (const r of this.untaggedBuffer) {
+        if (!/FETCH/i.test(r.data)) continue;
+        const uidMatch = r.data.match(/\bUID\s+(\d+)/i);
+        if (!uidMatch) continue;
+        const uid = parseInt(uidMatch[1]!, 10);
+        if (!result.has(uid)) result.set(uid, new Map());
+        const sectionMap = result.get(uid)!;
+        for (const section of sections) {
+          const buf = parseSectionResponse(r.data, section);
+          if (buf !== null) sectionMap.set(section, buf);
+        }
+      }
+      return result;
     });
   }
 

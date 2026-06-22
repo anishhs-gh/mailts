@@ -94,6 +94,8 @@ export { buildICalString } from './core/ICal.js';
 // IMAP
 export { ImapClient } from './imap/ImapClient.js';
 export { ImapSession } from './imap/ImapSession.js';
+export { parseBodyStructure } from './imap/ImapBodyStructure.js';
+export type { BodyNode, BodyLeaf, BodyMultipart } from './imap/ImapBodyStructure.js';
 
 // Queue
 export { MailQueue } from './queue/MailQueue.js';

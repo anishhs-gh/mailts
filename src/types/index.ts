@@ -33,6 +33,9 @@ export type {
   ImapFetchOptions,
   ImapSearchCriteria,
   ImapListEntry,
+  BodyNode,
+  BodyLeaf,
+  BodyMultipart,
 } from './imap.js';
 
 export type {

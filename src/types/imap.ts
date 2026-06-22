@@ -87,6 +87,8 @@ export interface ImapMessage {
     html?: string;
     attachments: ImapAttachment[];
   };
+  /** Populated when fetched with `structure: true`. Full MIME tree with section numbers. */
+  structure?: import('../imap/ImapBodyStructure.js').BodyNode;
   size: number;
   internalDate: Date | null;
   /** CONDSTORE: mod-sequence for this message. */
@@ -109,6 +111,8 @@ export interface ImapStatusResult {
   highestModSeq?: number;
 }
 
+export type { BodyNode, BodyLeaf, BodyMultipart } from '../imap/ImapBodyStructure.js';
+
 export interface ImapFetchOptions {
   /**
    * Mailbox to operate on.  Defaults to `'INBOX'` if no mailbox has been
@@ -121,7 +125,16 @@ export interface ImapFetchOptions {
   seq?: string;
   limit?: number;
   markSeen?: boolean;
+  /** Fetch full RFC822 message and parse the complete MIME body (text, html, attachments). */
   bodies?: boolean;
+  /** Fetch BODYSTRUCTURE only — populates `message.structure`, no body content transferred. */
+  structure?: boolean;
+  /**
+   * Fetch text/plain and text/html parts only via selective BODY[n] section fetches.
+   * Much more bandwidth-efficient than `bodies: true` for large messages with attachments.
+   * Populates `message.body.text` / `message.body.html` and `message.structure`.
+   */
+  textOnly?: boolean;
 }
 
 export interface ImapSearchCriteria {
