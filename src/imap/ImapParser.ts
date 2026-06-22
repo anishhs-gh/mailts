@@ -152,11 +152,11 @@ export function decodeRfc2047(input: string): string {
     if (i % 2 === 1) {
       const m = part.match(/^=\?([^?]+)\?([BbQq])\?([^?]*)\?=$/);
       if (!m) return part;
-      const [, , enc, text] = m;
+      const [, charset, enc, text] = m;
       if (enc!.toUpperCase() === 'B') {
-        return Buffer.from(text!, 'base64').toString('utf8');
+        return decodeBytes(Buffer.from(text!, 'base64'), charset!);
       }
-      // Q-encoding: collect bytes, decode as UTF-8 in one shot
+      // Q-encoding: collect raw bytes, then decode with the declared charset
       const qText = text!.replace(/_/g, ' ');
       const bytes: number[] = [];
       for (let j = 0; j < qText.length; ) {
@@ -168,7 +168,7 @@ export function decodeRfc2047(input: string): string {
           j++;
         }
       }
-      return Buffer.from(bytes).toString('utf8');
+      return decodeBytes(Buffer.from(bytes), charset!);
     }
     // RFC 2047: whitespace between two adjacent encoded words is discarded
     if (i > 0 && i < parts.length - 1 && /^\s+$/.test(part)) return '';
@@ -176,6 +176,20 @@ export function decodeRfc2047(input: string): string {
     return Buffer.from(part, 'binary').toString('utf8');
   });
   return decoded.join('');
+}
+
+/**
+ * Decode a byte buffer with the given charset label using the WHATWG TextDecoder.
+ * Node.js 18+ ships with full ICU, so this covers every charset RFC 2047 and
+ * MIME may specify (ISO-2022-JP, GBK, Big5, EUC-KR, all Windows-125x, etc.)
+ * without any runtime dependencies. Falls back to UTF-8 for unknown labels.
+ */
+export function decodeBytes(bytes: Buffer, charset: string): string {
+  try {
+    return new TextDecoder(charset).decode(bytes);
+  } catch {
+    return new TextDecoder('utf-8').decode(bytes);
+  }
 }
 
 /** Parse envelope address list from IMAP ENVELOPE format. */

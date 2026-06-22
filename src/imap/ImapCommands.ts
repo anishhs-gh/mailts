@@ -100,6 +100,12 @@ export const ImapCmd = {
   uidFetch:     (uids: string, items: string) => `UID FETCH ${uids} (${items})`,
   uidFetchChangedSince: (uids: string, items: string, modseq: number) =>
     `UID FETCH ${uids} (${items}) (CHANGEDSINCE ${modseq})`,
+  uidFetchBodyStructure: (uids: string) =>
+    `UID FETCH ${uids} (UID FLAGS RFC822.SIZE INTERNALDATE ENVELOPE BODYSTRUCTURE)`,
+  uidFetchSection: (uids: string, section: string) =>
+    `UID FETCH ${uids} (UID BODY.PEEK[${section}])`,
+  uidFetchSections: (uids: string, sections: string[]) =>
+    `UID FETCH ${uids} (UID ${sections.map(s => `BODY.PEEK[${s}]`).join(' ')})`,
 
   // Store
   store:        (range: string, flags: string[], add: boolean) =>

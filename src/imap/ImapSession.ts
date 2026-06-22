@@ -1,4 +1,6 @@
 import { ImapClient } from './ImapClient.js';
+import { decodeBytes } from './ImapParser.js';
+import type { BodyLeaf, BodyMultipart, BodyNode } from './ImapBodyStructure.js';
 import type { Logger } from '../logger/Logger.js';
 import type {
   ImapConfig,
@@ -186,16 +188,34 @@ export class ImapSession {
         const query: ImapSearchCriteria = {};
         if (opts.seen === true) query.seen = true;
         if (opts.seen === false) query.unseen = true;
-
         uids = await this.client.search(query);
-
-        if (opts.limit !== undefined) {
-          uids = uids.slice(-opts.limit);
-        }
+        if (opts.limit !== undefined) uids = uids.slice(-opts.limit);
       }
 
+      if (uids.length === 0) return [];
+
+      // ── textOnly: BODYSTRUCTURE + selective text section fetches ──────────
+      if (opts.textOnly) {
+        return this.fetchTextOnly(uids, opts.markSeen ?? false);
+      }
+
+      // ── structure: BODYSTRUCTURE only, no content ─────────────────────────
+      if (opts.structure) {
+        const messages = await this.client.fetch(
+          uids,
+          'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE',
+        );
+        const structures = await this.client.fetchBodyStructure(uids);
+        for (const msg of messages) {
+          const s = structures.get(msg.uid);
+          if (s) msg.structure = s;
+        }
+        return messages;
+      }
+
+      // ── bodies: full RFC822 ───────────────────────────────────────────────
       const items = opts.bodies
-        ? 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE BODY[TEXT] BODY[HEADER]'
+        ? 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE RFC822'
         : 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE';
 
       const messages = await this.client.fetch(uids, items);
@@ -206,6 +226,126 @@ export class ImapSession {
 
       return messages;
     });
+  }
+
+  private async fetchTextOnly(uids: number[], markSeen: boolean): Promise<ImapMessage[]> {
+    const messages = await this.client.fetch(
+      uids,
+      'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE',
+    );
+    const structures = await this.client.fetchBodyStructure(uids);
+
+    // Build per-UID section lists: only text/plain and text/html leaves
+    const uidSections = new Map<number, { textSection?: string; htmlSection?: string }>();
+    const allSections: string[] = [];
+
+    for (const msg of messages) {
+      const tree = structures.get(msg.uid);
+      if (!tree) continue;
+      msg.structure = tree;
+      const text = findLeaf(tree, 'text/plain');
+      const html = findLeaf(tree, 'text/html');
+      const entry: { textSection?: string; htmlSection?: string } = {};
+      if (text) { entry.textSection = text.section; allSections.push(text.section); }
+      if (html) { entry.htmlSection  = html.section; allSections.push(html.section); }
+      uidSections.set(msg.uid, entry);
+    }
+
+    if (allSections.length > 0) {
+      const unique = [...new Set(allSections)];
+      const fetched = await this.client.fetchSections(uids, unique);
+
+      for (const msg of messages) {
+        const entry = uidSections.get(msg.uid);
+        if (!entry) continue;
+        const sectionMap = fetched.get(msg.uid) ?? new Map<string, Buffer>();
+        const tree = structures.get(msg.uid);
+
+        msg.body = { attachments: [] };
+
+        if (entry.textSection) {
+          const raw = sectionMap.get(entry.textSection);
+          const leaf = tree ? findLeaf(tree, 'text/plain') : undefined;
+          if (raw && leaf) msg.body.text = decodeBytes(raw, leaf.charset ?? 'utf-8');
+        }
+        if (entry.htmlSection) {
+          const raw = sectionMap.get(entry.htmlSection);
+          const leaf = tree ? findLeaf(tree, 'text/html') : undefined;
+          if (raw && leaf) msg.body.html = decodeBytes(raw, leaf.charset ?? 'utf-8');
+        }
+      }
+    }
+
+    if (markSeen && uids.length > 0) {
+      await this.client.setFlagsSilent(uids, ['\\Seen'], true);
+    }
+
+    return messages;
+  }
+
+  /**
+   * Search for messages matching `criteria` in `mailbox` (default `'INBOX'`).
+   * Returns UIDs. Auto-selects the mailbox.
+   *
+   * @example
+   * ```ts
+   * const uids = await session.search({ from: 'boss@example.com', unseen: true });
+   * const msgs  = await session.fetch({ uids, bodies: true });
+   * ```
+   */
+  async search(
+    criteria: ImapSearchCriteria,
+    mailbox = DEFAULT_MAILBOX,
+  ): Promise<number[]> {
+    return this.withMailbox(mailbox, () => this.client.search(criteria));
+  }
+
+  /**
+   * Fetch the MIME structure tree for a single message without downloading any content.
+   * Use the returned `BodyNode` to inspect parts and decide which sections to fetch.
+   *
+   * @example
+   * ```ts
+   * const tree = await session.fetchStructure(uid);
+   * // tree is a BodyMultipart or BodyLeaf describing the full MIME tree
+   * ```
+   */
+  async fetchStructure(uid: number, mailbox?: string): Promise<BodyNode | undefined> {
+    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
+    return this.withMailbox(mb, async () => {
+      const map = await this.client.fetchBodyStructure([uid]);
+      return map.get(uid);
+    });
+  }
+
+  /**
+   * Fetch a single MIME section as raw bytes. Uses BODY.PEEK — never sets \\Seen.
+   * `section` is the IMAP section number: "1", "2", "3.1", etc.
+   *
+   * @example
+   * ```ts
+   * const bytes = await session.fetchSection(uid, '2');  // fetch HTML part
+   * ```
+   */
+  async fetchSection(uid: number, section: string, mailbox?: string): Promise<Buffer> {
+    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
+    return this.withMailbox(mb, () => this.client.fetchSection(uid, section));
+  }
+
+  /**
+   * Fetch text/plain and text/html parts only — no attachment bytes transferred.
+   * Far more bandwidth-efficient than `fetch({ bodies: true })` for large messages.
+   * Also populates `message.structure` with the full MIME tree.
+   *
+   * @example
+   * ```ts
+   * const msgs = await session.fetchText([uid1, uid2]);
+   * console.log(msgs[0].body?.text);
+   * ```
+   */
+  async fetchText(uids: number[], mailbox?: string): Promise<ImapMessage[]> {
+    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
+    return this.withMailbox(mb, () => this.fetchTextOnly(uids, false));
   }
 
   /**
@@ -380,4 +520,17 @@ export class ImapSession {
   get status(): ImapMailboxStatus | null {
     return this.currentMailbox;
   }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function findLeaf(node: BodyNode, contentType: string): BodyLeaf | undefined {
+  if (node.type === 'leaf') {
+    return node.contentType === contentType ? node : undefined;
+  }
+  for (const child of (node as BodyMultipart).parts) {
+    const found = findLeaf(child, contentType);
+    if (found) return found;
+  }
+  return undefined;
 }

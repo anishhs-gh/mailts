@@ -3,6 +3,42 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.4.0] — 2026-06-22
+
+### Added
+
+- **BODYSTRUCTURE parser** — `parseBodyStructure(raw)` converts a raw IMAP `BODYSTRUCTURE` response into a typed `BodyLeaf | BodyMultipart` tree. Each node carries `section`, `contentType`, `charset`, `encoding`, `size`, `filename`, `contentId`, and `disposition`. Exported as `BodyNode`, `BodyLeaf`, `BodyMultipart` from all entry points.
+- **`ImapSession.fetchStructure(uid, mailbox?)`** — returns the `BodyNode` tree for a single message without transferring any body content. One round-trip.
+- **`ImapSession.fetchSection(uid, section, mailbox?)`** — fetches a single MIME section as raw `Buffer` using `BODY.PEEK[n]` (never sets `\Seen`).
+- **`ImapSession.fetchText(uids[], mailbox?)`** — bandwidth-efficient text fetch: issues one `BODYSTRUCTURE` batch then selectively fetches only `text/plain` and `text/html` sections. Populates `message.body.text`, `message.body.html`, and `message.structure`. For a 20 MB email with attachments, transfers only the text sections (~KB) instead of the full message.
+- **`ImapFetchOptions.structure`** — `fetch({ structure: true })` returns headers + BODYSTRUCTURE with no body content; populates `message.structure`.
+- **`ImapFetchOptions.textOnly`** — `fetch({ textOnly: true })` internally uses `fetchText` — BODYSTRUCTURE-driven selective fetch, bypasses RFC822.
+- **`ImapSession.search(criteria, mailbox?)`** — exposes full `ImapSearchCriteria` (`from`, `subject`, `since`, `before`, `flagged`, etc.) through the session lock. Previously only accessible by instantiating `ImapClient` directly.
+- **`ImapClient.fetchBodyStructure(uids[])`** — returns `Map<uid, BodyNode>`, fetches all UIDs in a single command.
+- **`ImapClient.fetchSection(uid, section)`** — single `BODY.PEEK[n]` fetch.
+- **`ImapClient.fetchSections(uids[], sections[])`** — batch multi-section fetch in one round-trip, returns `Map<uid, Map<section, Buffer>>`.
+- **`parseSectionResponse(data, section)`** — extract raw `Buffer` for a `BODY[n]` section from a FETCH response string. Exported from `@mailts/core/imap`.
+- **`ImapAttachment.contentId`** — bare Content-ID value (angle brackets stripped) for inline parts referenced by `cid:` URLs in HTML.
+- **`ImapAttachment.inline`** — `true` when the part carries `Content-Disposition: inline`.
+- **`ImapAttachment.nestedMessage`** — present for `content-type: message/rfc822` parts (forwarded / bounced emails). Contains `{ envelope: ImapEnvelope, body?: { text?, html?, attachments[] } }` from recursive parsing of the nested message.
+- **`ImapMessage.structure`** — populated when `structure: true` or `textOnly: true` is used.
+
+### Fixed
+
+- **Body always empty** (`bodies: true` non-functional) — `parseFetchResponse` now parses `RFC822` literals and runs a full inline MIME parser. Previously `BODY[TEXT]` was requested but the response was silently discarded.
+- **Folded headers** — `Content-Type` boundaries split across lines (`\r\n\t`) are now correctly unfolded before parsing, fixing multipart boundary extraction for virtually all Gmail messages.
+- **RFC 2047 charset ignored** — `decodeRfc2047` now uses `TextDecoder` with the declared charset instead of always decoding as UTF-8. Correct output for ISO-8859-1, ISO-8859-2…16, Windows-1250…1258, and (on full-ICU Node.js 18+) ISO-2022-JP, GBK, Big5, EUC-KR — zero new runtime dependencies.
+- **Inline attachments not captured** — `Content-Disposition: inline` parts with a `filename` or `Content-ID` are now exposed as `ImapAttachment` entries with `inline: true` and `contentId` set. Previously they fell through to the text routing and were lost.
+- **`message/rfc822` treated as plain text** — forwarded and bounced emails embedded as `message/rfc822` parts are now recursively parsed and exposed via `ImapAttachment.nestedMessage`.
+- **`splitPartHeadersAndBody` false separator** — regex `\n\s*\n` replaced with `\n\n` to prevent a whitespace-only continuation line from being misidentified as the header/body separator.
+- **`decodeContent` default encoding** — changed from `Buffer.from(raw, 'utf8')` to `Buffer.from(raw, 'latin1')` so raw bytes are preserved before charset-aware decoding, fixing 7bit/8bit ISO-8859-1 body parts.
+
+### Tests
+
+- Added `tests/unit/imap/ImapBodyStructure.test.ts` — 11 tests covering leaf, multipart/alternative, multipart/mixed, three-level nesting, section numbering, RFC 2047 filename decoding.
+- Added `tests/unit/imap/ImapFetch.test.ts` — 14 tests covering text/plain, text/html, multipart/alternative, attachments, inline parts with `contentId`, `message/rfc822` nested parsing, ISO-8859-1 charset decoding, `parseSectionResponse`.
+- Extended `tests/unit/imap/ImapParser.test.ts` — 8 new tests for charset-aware `decodeRfc2047` (ISO-8859-1 base64, ISO-8859-1 QP, UTF-8 regression, unknown charset fallback) and `decodeBytes`.
+
 ## [0.3.0] — 2026-05-12
 
 ### Added

@@ -9,7 +9,7 @@ npm install @mailts/core
 ## Features
 
 - **Native SMTP** — STARTTLS upgrade, AUTH PLAIN / LOGIN / XOAUTH2, PIPELINING, connection pool
-- **Native IMAP** — automatic mailbox selection, fetch, search, MOVE/COPY/APPEND, mailbox management, CONDSTORE, IDLE push notifications, full MIME parsing
+- **Native IMAP** — automatic mailbox selection, full MIME parsing (multipart, inline attachments, forwarded messages, charset-aware), BODYSTRUCTURE selective fetch, search, MOVE/COPY/APPEND, CONDSTORE, IDLE push notifications
 - **HTTP transports** — Resend, SendGrid, Mailgun, Postmark, Amazon SES (all zero-dep via `node:http/https`)
 - **DKIM signing** — rsa-sha256, relaxed/relaxed canonicalization, configurable signed headers
 - **iCal invites** — attach calendar invites (`text/calendar`) with attendees, RSVP, timezone
@@ -299,6 +299,107 @@ const [inbox, drafts] = await Promise.all([
 
 await session.close();
 ```
+
+### Fetch modes
+
+| Mode | Option | What transfers | Use when |
+|---|---|---|---|
+| Headers only | _(default)_ | Envelope, flags, size | Inbox listing |
+| Full message | `bodies: true` | Complete RFC 822 message | Need body + attachments |
+| Text only | `textOnly: true` | BODYSTRUCTURE + text/html sections | Reading body, skipping attachments |
+| Structure only | `structure: true` | BODYSTRUCTURE metadata tree | Attachment listing without downloading |
+
+```ts
+// Full body — text, html, and attachment bytes
+const msgs = await session.fetch({ uids: [1, 2, 3], bodies: true });
+console.log(msgs[0].body?.text);
+console.log(msgs[0].body?.attachments[0]?.filename);
+
+// Text only — bandwidth-efficient for large messages
+const msgs = await session.fetch({ seen: false, textOnly: true });
+console.log(msgs[0].body?.text);   // populated
+console.log(msgs[0].structure);    // BodyNode tree available
+
+// Structure only — list attachment names without downloading content
+const msgs = await session.fetch({ uids: [5], structure: true });
+const tree = msgs[0].structure!;
+```
+
+### BODYSTRUCTURE — selective section fetch
+
+```ts
+import type { BodyLeaf, BodyMultipart } from '@mailts/core';
+
+// Get the MIME tree for a single message
+const tree = await session.fetchStructure(uid);
+
+// Fetch a specific section as raw bytes
+const bytes = await session.fetchSection(uid, '2');   // e.g. the HTML part
+
+// Fetch text/plain + text/html parts only (no attachment bytes transferred)
+const [msg] = await session.fetchText([uid]);
+console.log(msg.body?.text);
+console.log(msg.body?.html);
+console.log(msg.structure);   // full BodyNode tree
+```
+
+`BodyNode` is either a `BodyLeaf` (single part) or `BodyMultipart` (container):
+
+```ts
+function printTree(node: BodyNode, indent = 0): void {
+  const prefix = ' '.repeat(indent * 2);
+  if (node.type === 'leaf') {
+    console.log(`${prefix}[${node.section}] ${node.contentType} (${node.size}B) enc=${node.encoding}`);
+    if (node.filename) console.log(`${prefix}    filename: ${node.filename}`);
+  } else {
+    console.log(`${prefix}${node.contentType}`);
+    for (const child of node.parts) printTree(child, indent + 1);
+  }
+}
+```
+
+### Search
+
+```ts
+// Full criteria search — returns UIDs
+const uids = await session.search({
+  from: 'boss@example.com',
+  unseen: true,
+  since: new Date('2025-01-01'),
+  subject: 'report',
+});
+
+const messages = await session.fetch({ uids, textOnly: true });
+```
+
+### Parsed MIME body
+
+When `bodies: true` or `textOnly: true`, `message.body` is populated:
+
+```ts
+const [msg] = await session.fetch({ uids: [1], bodies: true });
+
+msg.body?.text          // string | undefined — decoded plain text
+msg.body?.html          // string | undefined — decoded HTML
+
+// Attachments
+for (const att of msg.body?.attachments ?? []) {
+  att.filename          // decoded filename (RFC 2047 encoded names supported)
+  att.contentType       // "application/pdf", "image/png", …
+  att.size              // byte size
+  att.content           // Buffer — raw bytes
+  att.inline            // true for Content-Disposition: inline parts
+  att.contentId         // bare Content-ID for cid: references in HTML
+
+  // Forwarded / bounced email (message/rfc822)
+  if (att.contentType === 'message/rfc822') {
+    att.nestedMessage?.envelope.subject   // subject of the forwarded message
+    att.nestedMessage?.body?.text         // decoded body of the nested message
+  }
+}
+```
+
+Charset decoding is handled automatically. ISO-8859-1, ISO-8859-2…16, Windows-1250…1258, ISO-2022-JP, GBK, Big5, EUC-KR and all other WHATWG Encoding Standard charsets are decoded correctly via Node.js built-in `TextDecoder` — no additional dependencies.
 
 ### Explicit selection
 

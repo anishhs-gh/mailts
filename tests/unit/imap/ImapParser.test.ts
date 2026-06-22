@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ImapParser, parseList, decodeRfc2047, parseEnvelopeAddresses } from '../../../src/imap/ImapParser.js';
+import { ImapParser, parseList, decodeRfc2047, decodeBytes, parseEnvelopeAddresses } from '../../../src/imap/ImapParser.js';
 
 describe('ImapParser.feed', () => {
   it('parses a simple tagged OK response', () => {
@@ -151,6 +151,50 @@ describe('decodeRfc2047', () => {
     // ✈ U+2708 → UTF-8: E2 9C 88
     const encoded = '=?UTF-8?Q?flight_=E2=9C=88?=';
     expect(decodeRfc2047(encoded)).toBe('flight ✈');
+  });
+});
+
+describe('decodeRfc2047 — charset-aware decoding', () => {
+  it('decodes ISO-8859-1 base64 encoded word correctly', () => {
+    // "café" in ISO-8859-1 — byte 0xe9 is é in Latin-1, not valid UTF-8
+    const bytes = Buffer.from('café', 'latin1').toString('base64');
+    const encoded = `=?ISO-8859-1?B?${bytes}?=`;
+    expect(decodeRfc2047(encoded)).toBe('café');
+  });
+
+  it('decodes ISO-8859-1 Q-encoded word', () => {
+    // é = 0xe9 in ISO-8859-1
+    const encoded = '=?ISO-8859-1?Q?caf=E9?=';
+    expect(decodeRfc2047(encoded)).toBe('café');
+  });
+
+  it('decodes UTF-8 encoded word (regression: should be unchanged)', () => {
+    const bytes = Buffer.from('héllo', 'utf8').toString('base64');
+    const encoded = `=?UTF-8?B?${bytes}?=`;
+    expect(decodeRfc2047(encoded)).toBe('héllo');
+  });
+
+  it('falls back to UTF-8 for unknown charset without throwing', () => {
+    const bytes = Buffer.from('test', 'utf8').toString('base64');
+    const encoded = '=?x-unknown-charset?B?dGVzdA==?=';
+    expect(() => decodeRfc2047(encoded)).not.toThrow();
+  });
+});
+
+describe('decodeBytes', () => {
+  it('decodes UTF-8 bytes', () => {
+    const buf = Buffer.from('héllo', 'utf8');
+    expect(decodeBytes(buf, 'utf-8')).toBe('héllo');
+  });
+
+  it('decodes ISO-8859-1 bytes', () => {
+    const buf = Buffer.from('café', 'latin1');
+    expect(decodeBytes(buf, 'iso-8859-1')).toBe('café');
+  });
+
+  it('falls back to UTF-8 for an unknown charset', () => {
+    const buf = Buffer.from('hello', 'utf8');
+    expect(decodeBytes(buf, 'x-not-a-real-charset')).toBe('hello');
   });
 });
 
