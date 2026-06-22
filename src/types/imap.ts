@@ -62,6 +62,19 @@ export interface ImapAttachment {
   contentType: string;
   size: number;
   content?: Buffer;
+  /** Present on `Content-Disposition: inline` parts — the bare Content-ID value (no angle brackets). */
+  contentId?: string;
+  /** True when the part carries `Content-Disposition: inline` (embedded resource rather than download). */
+  inline?: boolean;
+  /** Populated for `content-type: message/rfc822` parts (forwarded / bounced emails). */
+  nestedMessage?: {
+    envelope: ImapEnvelope;
+    body?: {
+      text?: string;
+      html?: string;
+      attachments: ImapAttachment[];
+    };
+  };
 }
 
 export interface ImapMessage {

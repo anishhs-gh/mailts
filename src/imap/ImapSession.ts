@@ -195,7 +195,7 @@ export class ImapSession {
       }
 
       const items = opts.bodies
-        ? 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE BODY[TEXT] BODY[HEADER]'
+        ? 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE RFC822'
         : 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE';
 
       const messages = await this.client.fetch(uids, items);
@@ -206,6 +206,23 @@ export class ImapSession {
 
       return messages;
     });
+  }
+
+  /**
+   * Search for messages matching `criteria` in `mailbox` (default `'INBOX'`).
+   * Returns UIDs. Auto-selects the mailbox.
+   *
+   * @example
+   * ```ts
+   * const uids = await session.search({ from: 'boss@example.com', unseen: true });
+   * const msgs  = await session.fetch({ uids, bodies: true });
+   * ```
+   */
+  async search(
+    criteria: ImapSearchCriteria,
+    mailbox = DEFAULT_MAILBOX,
+  ): Promise<number[]> {
+    return this.withMailbox(mailbox, () => this.client.search(criteria));
   }
 
   /**
