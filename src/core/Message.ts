@@ -31,7 +31,10 @@ export interface BuiltMessage {
 }
 
 export interface BuildOptions {
-  /** Policy for `path` attachments. @default 'allow' */
+  /**
+   * Policy for `path` attachments. Unset behaves as `'allow'` and emits a
+   * one-time warning when a path is used (the default will become `'deny'`).
+   */
   attachmentPolicy?: AttachmentPathPolicy;
 }
 
@@ -61,11 +64,16 @@ const needsUtf8 = (addr: string) => /[^\x00-\x7f]/.test(addr);
  * attachment explicitly asks for `8bit`, or an address needs SMTPUTF8.
  */
 export async function buildMessage(options: EmailOptions, buildOpts: BuildOptions = {}): Promise<BuiltMessage> {
-  const policy = buildOpts.attachmentPolicy ?? 'allow';
+  const policy = buildOpts.attachmentPolicy;
   const fromList = parseAddressList(options.from, options.fromName);
   const toList = parseAddressList(options.to, options.toName);
   const ccList = parseAddressList(options.cc, options.ccName);
   if (toList.length === 0) throw new MimeError('At least one recipient (to) is required');
+
+  for (const a of [...fromList, ...toList, ...ccList, ...parseAddressList(options.bcc)]) checkAddress(a.email);
+  if (options.replyTo) {
+    for (const a of parseAddressList(Array.isArray(options.replyTo) ? options.replyTo : [options.replyTo])) checkAddress(a.email);
+  }
 
   const envelopeFrom = fromList[0]?.email ?? '';
   const envelopeTo = dedupe([
@@ -169,6 +177,15 @@ export async function buildMessage(options: EmailOptions, buildOpts: BuildOption
   };
 }
 
+/**
+ * Structural address check: one `@`, no whitespace, brackets, quotes or
+ * separators. Deliberately permissive otherwise (non-ASCII allowed for SMTPUTF8).
+ */
+const ADDRESS_RE = /^[^\s<>()[\],;:"\\@]+@[^\s<>()[\],;:"\\@]+$/;
+function checkAddress(email: string): void {
+  if (!ADDRESS_RE.test(email)) throw new MimeError(`Invalid email address: ${JSON.stringify(email)}`);
+}
+
 function dedupe(list: string[]): string[] {
   const seen = new Set<string>();
   return list.filter(a => {
@@ -209,7 +226,7 @@ function calendarEntity(options: EmailOptions): { part: Entity; file: Entity } {
   };
 }
 
-async function attachmentEntity(att: Attachment, policy: AttachmentPathPolicy): Promise<Entity> {
+async function attachmentEntity(att: Attachment, policy: AttachmentPathPolicy | undefined): Promise<Entity> {
   const filename = sanitizeHeaderValue(att.filename || 'attachment');
 
   if (att.rfc822 !== undefined) {

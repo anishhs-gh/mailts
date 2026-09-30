@@ -107,13 +107,28 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
  */
 export type AttachmentPathPolicy = 'allow' | 'deny' | { root: string };
 
-async function checkPath(path: string, policy: AttachmentPathPolicy): Promise<string> {
+let warnedDefaultPolicy = false;
+
+async function checkPath(path: string, policy: AttachmentPathPolicy | undefined): Promise<string> {
   if (policy === 'deny') throw new MimeError('Attachment paths are disabled by attachmentPolicy');
-  if (policy === 'allow') return resolve(process.cwd(), path);
+  if (policy === undefined && !warnedDefaultPolicy) {
+    warnedDefaultPolicy = true;
+    // Written to stderr by Node's default handler — never stdout.
+    process.emitWarning(
+      'Attachment `path` was read with the default attachmentPolicy (\'allow\'). The default becomes \'deny\' ' +
+      'in a future release — set attachmentPolicy explicitly (\'allow\', \'deny\' or { root }).',
+      { type: 'MailtsWarning', code: 'MAILTS_ATTACHMENT_PATH_POLICY' },
+    );
+  }
+  if (policy === undefined || policy === 'allow') return resolve(process.cwd(), path);
   const root = await realpath(resolve(policy.root)).catch(() => {
     throw new MimeError(`attachmentPolicy root does not exist: ${policy.root}`);
   });
-  const real = await realpath(resolve(root, path)).catch(() => {
+  const lexical = resolve(root, path);
+  if (lexical !== root && !lexical.startsWith(root + sep)) {
+    throw new MimeError(`Attachment path escapes the allowed root: ${basename(path)}`);
+  }
+  const real = await realpath(lexical).catch(() => {
     throw new MimeError(`Attachment not found: ${basename(path)}`);
   });
   if (real !== root && !real.startsWith(root + sep)) {
@@ -122,9 +137,13 @@ async function checkPath(path: string, policy: AttachmentPathPolicy): Promise<st
   return real;
 }
 
+/**
+ * @param policy - Path policy; `undefined` means "not configured" (behaves as
+ *   `'allow'` and emits a one-time deprecation warning when a path is used).
+ */
 export async function resolveAttachment(
   att: Attachment,
-  policy: AttachmentPathPolicy = 'allow',
+  policy?: AttachmentPathPolicy,
 ): Promise<ResolvedAttachment> {
   const filename = att.filename || (att.path ? basename(att.path) : 'file');
   const contentType = att.contentType ?? guessMime(filename);

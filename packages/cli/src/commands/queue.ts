@@ -53,6 +53,7 @@ export async function queueCommand(args: QueueArgs): Promise<void> {
       printInfo('Queue stats:');
       process.stdout.write(
         `  Pending:   ${stats.pending}\n` +
+        ('scheduled' in stats ? `  Scheduled: ${(stats as { scheduled: number }).scheduled}\n` : '') +
         `  Running:   ${stats.running}\n` +
         `  Succeeded: ${stats.succeeded}\n` +
         `  Dead:      ${stats.dead}\n` +

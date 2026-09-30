@@ -3,6 +3,11 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [Unreleased]
+
+### Added
+- `mailts queue status` shows a `Scheduled` row (retries waiting for backoff and `sendAt` jobs) when used with `@mailts/core` 0.5+.
+
 ## [0.1.6] — 2026-05-12
 
 ### Added

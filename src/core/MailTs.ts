@@ -1,7 +1,7 @@
 import { SmtpPool } from '../smtp/SmtpPool.js';
 import { SmtpClient, type SmtpSendResult } from '../smtp/SmtpClient.js';
 import { buildMessage, type BuiltMessage } from './Message.js';
-import type { AttachmentPathPolicy } from './Attachment.js';
+import { resolveAttachment, type AttachmentPathPolicy } from './Attachment.js';
 import { signDkim } from './Dkim.js';
 import { TemplateRenderer } from './Template.js';
 import { MailQueue } from '../queue/MailQueue.js';
@@ -59,7 +59,8 @@ export interface MailTsConfig {
   /**
    * Policy for attachments given by filesystem `path`. Use `'deny'` (or
    * `{ root }`) when messages are built from untrusted input such as AI agents.
-   * @default 'allow'
+   * Unset behaves as `'allow'` and warns once when a path is read; the default
+   * will become `'deny'` in a future release.
    */
   attachmentPolicy?: AttachmentPathPolicy;
 }
@@ -108,7 +109,7 @@ export class MailTs {
   private devMode = false;
   private queueOpts: QueueOptions = {};
   private hooks: TelemetryHooks = {};
-  private attachmentPolicy: AttachmentPathPolicy = 'allow';
+  private attachmentPolicy: AttachmentPathPolicy | undefined;
   private sentSession: ImapSession | null = null;
   private sentMailbox: string | null = null;
 
@@ -389,6 +390,21 @@ export class MailTs {
     return { mailbox, uid: res.uid };
   }
 
+  /**
+   * HTTP transports read attachments from `options`; resolve `path` entries here,
+   * under the attachment policy, so transports never touch the filesystem.
+   */
+  private async materializePaths(options: EmailOptions): Promise<EmailOptions> {
+    if (!options.attachments?.some(a => a.path !== undefined && a.content === undefined)) return options;
+    const attachments = await Promise.all(options.attachments.map(async (a) => {
+      if (a.path === undefined || a.content !== undefined || a.rfc822 !== undefined) return a;
+      const r = await resolveAttachment(a, this.attachmentPolicy);
+      const { path: _path, ...rest } = a;
+      return { ...rest, filename: r.filename, contentType: r.contentType, content: await r.getContent() };
+    }));
+    return { ...options, attachments };
+  }
+
   private sentImap(): ImapSession {
     if (!this.imapConfig) throw new ConfigError('IMAP not configured — saveToSent needs imap config');
     return (this.sentSession ??= new ImapSession(this.imapConfig, this.logger));
@@ -424,7 +440,7 @@ export class MailTs {
       if (this.transportOverride) {
         const transport = this.transportOverride;
         this.logger.debug('core', `Sending via ${transport.name} (${message.raw.length} bytes)`);
-        const r = await transport.send(message, options, signal);
+        const r = await transport.send(message, await this.materializePaths(options), signal);
         this.logger.info('core', `Message sent (${r.messageId})`);
         result = { ok: true, messageId: r.messageId, accepted: r.accepted, rejected: r.rejected };
       } else {
