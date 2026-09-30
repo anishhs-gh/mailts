@@ -4,7 +4,8 @@ import { EventEmitter } from 'events';
 import { SmtpStream } from './SmtpStream.js';
 import { SmtpReply } from './SmtpReply.js';
 import { Cmd, parseCapabilities, dotStuff } from './SmtpCommand.js';
-import { Credential } from '../core/Credential.js';
+import { Credential, parseXOAuth2Error } from '../core/Credential.js';
+import { resolveRequireTLS } from '../core/net.js';
 import { Redactor } from '../logger/Redactor.js';
 import { connectThroughProxy } from './SmtpProxy.js';
 import type { Logger } from '../logger/Logger.js';
@@ -13,6 +14,7 @@ import {
   SmtpConnError,
   SmtpAuthError,
   SmtpError,
+  SmtpRejectError,
   SmtpTimeoutError,
   SmtpTlsError,
 } from '../errors.js';
@@ -35,6 +37,25 @@ interface PendingReply {
   resolve: (r: SmtpReply) => void;
   reject: (e: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+/** Result of a single SMTP transaction. */
+export interface SmtpSendResult {
+  /** Queue id from the final 250 reply, when the server reports one. */
+  serverId: string;
+  accepted: string[];
+  rejected: string[];
+  /** Per-recipient rejection replies, e.g. `550 5.1.1 No such user`. */
+  rejectedErrors: SmtpError[];
+}
+
+export interface SmtpSendOptions {
+  /** Declare 8BITMIME body (`BODY=8BITMIME`). */
+  eightBit?: boolean;
+  /** Request SMTPUTF8 (internationalised addresses). */
+  smtpUtf8?: boolean;
+  /** Fail when any recipient is rejected (default: deliver to the accepted ones). */
+  allRecipientsRequired?: boolean;
 }
 
 export interface SmtpClientEvents {
@@ -147,6 +168,15 @@ export class SmtpClient extends EventEmitter {
     // STARTTLS if not already TLS and server supports it
     if (!secure && this.capabilities?.starttls) {
       await this.doStartTls();
+    } else if (!secure && this.config.auth && resolveRequireTLS(this.config.requireTLS, host)) {
+      this.socket?.destroy();
+      throw new SmtpTlsError(
+        'SMTP server does not offer STARTTLS; refusing to authenticate over an unencrypted connection ' +
+        '(set requireTLS: false to allow)',
+      );
+    } else if (!secure && this.config.requireTLS === true) {
+      this.socket?.destroy();
+      throw new SmtpTlsError('SMTP server does not offer STARTTLS and requireTLS is set');
     }
 
     // AUTH
@@ -281,9 +311,7 @@ export class SmtpClient extends EventEmitter {
       if (!caps.auth.includes('XOAUTH2')) {
         throw new SmtpAuthError('Server does not support XOAUTH2', 535, []);
       }
-      const payload = cred.buildXOAuth2Payload();
-      const reply = await this.command(Cmd.authXOAuth2(payload), 'auth');
-      if (reply.code !== 235) throw SmtpError.fromReply(reply.code, [...reply.lines]);
+      await this.authXOAuth2(cred, false);
       return;
     }
 
@@ -302,40 +330,116 @@ export class SmtpClient extends EventEmitter {
       return;
     }
 
-    throw new SmtpAuthError(`No supported auth method available. Server offers: ${caps.auth.join(', ')}`, 535, []);
+    if (caps.auth.includes('PLAIN')) {
+      const reply = await this.command(Cmd.authPlain(cred.buildPlainPayload()), 'auth');
+      if (reply.code !== 235) throw SmtpError.fromReply(reply.code, [...reply.lines]);
+      return;
+    }
+
+    throw new SmtpAuthError(`No supported auth method available. Server offers: ${caps.auth.join(', ') || 'none'}`, 535, []);
   }
 
-  /** Send a single message — returns message-ID from 250 reply. */
-  async sendMessage(from: string, to: string[], raw: Buffer): Promise<string> {
+  /**
+   * AUTH XOAUTH2. On failure the server sends a `334 <base64 JSON>` challenge
+   * and waits for an empty line before the final 5xx — answering it keeps the
+   * connection usable. A rejected token is refreshed once via `getToken`.
+   */
+  private async authXOAuth2(cred: Credential, invalid: boolean): Promise<void> {
+    const token = await cred.resolveToken({ protocol: 'smtp', invalid });
+    let reply: SmtpReply;
+    try {
+      reply = await this.command(Cmd.authXOAuth2(cred.buildXOAuth2Payload(token)), 'auth');
+    } catch (e) {
+      // Some servers (e.g. Microsoft 365) reject with 535 directly, without a challenge
+      if (e instanceof SmtpAuthError && !invalid && cred.canRefresh) return this.authXOAuth2(cred, true);
+      throw e;
+    }
+    if (reply.code === 235) return;
+
+    let detail = '';
+    if (reply.code === 334) {
+      const err = parseXOAuth2Error(reply.text);
+      detail = err.status ? ` (status ${err.status})` : '';
+      try {
+        reply = await this.command('', 'auth');
+      } catch (e) {
+        if (!(e instanceof SmtpError)) throw e;
+        if (!invalid && cred.canRefresh) {
+          this.logger?.debug('smtp', 'XOAUTH2 token rejected — refreshing and retrying once');
+          return this.authXOAuth2(cred, true);
+        }
+        throw new SmtpAuthError(`SMTP XOAUTH2 authentication failed${detail}: ${e.message}`, e.replyCode || 535, [...e.replyLines]);
+      }
+    }
+    throw SmtpError.fromReply(reply.code, [...reply.lines]);
+  }
+
+  /**
+   * Send a single message. Returns the server queue id from the 250 reply.
+   * @deprecated Prefer `send()` which also reports accepted/rejected recipients.
+   */
+  async sendMessage(from: string, to: string[], raw: Buffer, opts: SmtpSendOptions = {}): Promise<string> {
+    return (await this.send(from, to, raw, opts)).serverId;
+  }
+
+  /**
+   * Run one SMTP transaction (MAIL FROM / RCPT TO / DATA).
+   * Recipients rejected with 5xx/4xx are reported in `rejected`; the message is
+   * still delivered to the accepted ones unless `allRecipientsRequired`.
+   * Throws when no recipient is accepted or the message itself is refused.
+   */
+  async send(from: string, to: string[], raw: Buffer, opts: SmtpSendOptions = {}): Promise<SmtpSendResult> {
     if (this.state !== 'ready') throw new SmtpConnError('Client not in READY state');
+    if (to.length === 0) throw new SmtpRejectError('No recipients', 554, []);
+    // Validate the whole envelope before writing anything to the socket
+    const rcptLines = to.map(Cmd.rcptTo);
+    Cmd.mailFrom(from);
     this.state = 'sending';
 
-    try {
-      const sizeParam = this.capabilities?.size ? raw.length : undefined;
-      await this.command(Cmd.mailFrom(from, sizeParam), 'mail_from');
+    const caps = this.capabilities;
+    if (caps?.size && raw.length > caps.size) {
+      this.state = 'ready';
+      throw new SmtpRejectError(`Message size ${raw.length} exceeds server limit ${caps.size}`, 552, []);
+    }
+    if (opts.smtpUtf8 && !caps?.smtpUtf8) {
+      this.state = 'ready';
+      throw new SmtpRejectError('Server does not support SMTPUTF8 (required for internationalised addresses)', 553, []);
+    }
 
-      if (this.capabilities?.pipelining) {
-        // Pipeline RCPT TO commands — write all without waiting for individual replies
-        await this.pipelineRcpts(to);
-      } else {
-        for (const rcpt of to) {
-          await this.command(Cmd.rcptTo(rcpt), 'rcpt_to');
-        }
+    const params: string[] = [];
+    if (caps?.size) params.push(`SIZE=${raw.length}`);
+    if (opts.eightBit && caps?.eightBitMime) params.push('BODY=8BITMIME');
+    if (opts.smtpUtf8) params.push('SMTPUTF8');
+
+    try {
+      await this.command(Cmd.mailFrom(from, params), 'mail_from');
+
+      const accepted: string[] = [];
+      const rejected: string[] = [];
+      const rejectedErrors: SmtpError[] = [];
+      const results = caps?.pipelining
+        ? await this.pipelineRcpts(rcptLines)
+        : await this.serialRcpts(rcptLines);
+      results.forEach((r, i) => {
+        if (r instanceof Error) { rejected.push(to[i]!); rejectedErrors.push(r); }
+        else accepted.push(to[i]!);
+      });
+
+      if (accepted.length === 0 || (opts.allRecipientsRequired && rejected.length)) {
+        throw rejectedErrors[0] ?? new SmtpRejectError('All recipients rejected', 554, []);
       }
 
       await this.command(Cmd.data(), 'data');
 
-      // Write dot-stuffed body followed by terminating dot
       const stuffed = dotStuff(raw);
       this.logger?.proto('C', 'smtp', `[DATA] ${stuffed.length} bytes`);
       const dataReply = await new Promise<SmtpReply>((resolve, reject) => {
         const timer = setTimeout(
           () => reject(new SmtpTimeoutError('data_body')),
-          this.config.socketTimeout ?? 30_000,
+          Math.max(this.config.socketTimeout ?? 30_000, 60_000),
         );
         this.replyQueue.push({ resolve, reject, timer });
         this.socket!.write(stuffed);
-        this.socket!.write('\r\n');
       });
 
       if (dataReply.code !== 250) {
@@ -344,35 +448,49 @@ export class SmtpClient extends EventEmitter {
 
       this.messagesSent++;
       this.state = 'ready';
-
-      // Extract queued message ID from reply if present
-      const idMatch = dataReply.text.match(/<([^>]+)>/);
-      return idMatch?.[1] ?? `mailts-${Date.now()}@local`;
+      const idMatch = dataReply.text.match(/<([^>]+)>/) ?? dataReply.text.match(/(?:queued as|id=)\s*(\S+)/i);
+      return { serverId: idMatch?.[1] ?? '', accepted, rejected, rejectedErrors };
     } catch (err) {
       this.state = 'error';
-      // Attempt RSET to recover
-      try {
-        await this.command(Cmd.rset(), 'rset');
-        this.state = 'ready';
-      } catch {
-        // Connection is dead
+      // Attempt RSET to recover the connection for the next message
+      if (this.socket && !this.socket.destroyed) {
+        try {
+          await this.command(Cmd.rset(), 'rset');
+          this.state = 'ready';
+        } catch {
+          this.socket?.destroy();
+        }
       }
       throw err;
     }
   }
 
-  private async pipelineRcpts(to: string[]): Promise<void> {
-    const replyPromises = to.map(rcpt => {
-      const p = this.readReply('rcpt_to');
-      this.socket!.write(Cmd.rcptTo(rcpt) + '\r\n');
-      return p;
-    });
-    for (let i = 0; i < replyPromises.length; i++) {
-      const reply = await replyPromises[i]!;
-      if (reply.code !== 250 && reply.code !== 251) {
-        throw SmtpError.fromReply(reply.code, [...reply.lines]);
+  private async serialRcpts(lines: string[]): Promise<Array<SmtpReply | SmtpError>> {
+    const out: Array<SmtpReply | SmtpError> = [];
+    for (const line of lines) {
+      try {
+        out.push(await this.command(line, 'rcpt_to'));
+      } catch (e) {
+        if (!(e instanceof SmtpError) || e instanceof SmtpConnError) throw e;
+        out.push(e);
       }
     }
+    return out;
+  }
+
+  private async pipelineRcpts(lines: string[]): Promise<Array<SmtpReply | SmtpError>> {
+    const promises = lines.map(line => {
+      const p = this.readReply('rcpt_to');
+      this.logger?.proto('C', 'smtp', this.redactor.redact(line, 'C'));
+      this.socket!.write(line + '\r\n');
+      return p;
+    });
+    const settled = await Promise.allSettled(promises);
+    return settled.map(r => {
+      if (r.status === 'fulfilled') return r.value;
+      if (r.reason instanceof SmtpError && !(r.reason instanceof SmtpConnError)) return r.reason;
+      throw r.reason;
+    });
   }
 
   /** Send QUIT and close the socket. Safe to call even if already closed. */
@@ -404,5 +522,10 @@ export class SmtpClient extends EventEmitter {
   destroy(): void {
     this.socket?.destroy();
     this.state = 'closed';
+  }
+
+  /** Server capabilities from the last EHLO (null before connect). */
+  get serverCapabilities(): SmtpCapabilities | null {
+    return this.capabilities;
   }
 }

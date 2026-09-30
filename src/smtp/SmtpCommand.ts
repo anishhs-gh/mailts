@@ -1,4 +1,5 @@
 import type { SmtpCapabilities } from '../types/smtp.js';
+import { MimeError } from '../errors.js';
 
 /** Parse EHLO response lines into a capabilities object. */
 export function parseCapabilities(lines: readonly string[]): SmtpCapabilities {
@@ -37,9 +38,12 @@ export const Cmd = {
   authPlain: (payload: string) => `AUTH PLAIN ${payload}`,
   authLogin: () => 'AUTH LOGIN',
   authXOAuth2: (payload: string) => `AUTH XOAUTH2 ${payload}`,
-  mailFrom: (email: string, size?: number) =>
-    size !== undefined ? `MAIL FROM:<${email}> SIZE=${size}` : `MAIL FROM:<${email}>`,
-  rcptTo: (email: string) => `RCPT TO:<${email}>`,
+  /** `params` may be a SIZE number (legacy) or a list like `['SIZE=1234', 'SMTPUTF8']`. */
+  mailFrom: (email: string, params?: number | string[]) => {
+    const list = typeof params === 'number' ? [`SIZE=${params}`] : params ?? [];
+    return `MAIL FROM:<${envelopeAddr(email)}>${list.length ? ' ' + list.join(' ') : ''}`;
+  },
+  rcptTo: (email: string) => `RCPT TO:<${envelopeAddr(email)}>`,
   data: () => 'DATA',
   quit: () => 'QUIT',
   noop: () => 'NOOP',
@@ -47,9 +51,20 @@ export const Cmd = {
   vrfy: (address: string) => `VRFY ${address}`,
 };
 
-/** Dot-stuff a message body per RFC 5321 §4.5.2. */
+/** Envelope addresses must never carry CR/LF, `<`, `>` or spaces (command injection). */
+function envelopeAddr(email: string): string {
+  if (/[\r\n<>\s]/.test(email)) throw new MimeError(`Invalid envelope address: ${JSON.stringify(email)}`);
+  return email;
+}
+
+/**
+ * Dot-stuff a message body per RFC 5321 §4.5.2 and append the terminator.
+ * Returns the complete DATA payload ending in `\r\n.\r\n`.
+ */
 export function dotStuff(raw: Buffer): Buffer {
-  const str = raw.toString('binary');
-  const stuffed = str.replace(/^\.(.*)$/gm, '..$1');
-  return Buffer.from(stuffed + '\r\n.', 'binary');
+  let str = raw.toString('binary');
+  if (str.startsWith('.')) str = '.' + str;
+  str = str.replace(/\n\./g, '\n..');
+  const tail = str.endsWith('\r\n') ? '.\r\n' : '\r\n.\r\n';
+  return Buffer.from(str + tail, 'binary');
 }
