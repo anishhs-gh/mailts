@@ -1,7 +1,7 @@
 {
   "name": "@mailts/core",
   "version": "0.4.0",
-  "description": "Modern native TypeScript SMTP/IMAP library — zero legacy deps, built to replace nodemailer",
+  "description": "Modern native TypeScript SMTP/IMAP library \u2014 zero legacy deps, built to replace nodemailer",
   "license": "MIT",
   "author": {
     "name": "Anish Shekh",
@@ -41,6 +41,11 @@
       "types": "./dist/transports/index.d.ts",
       "import": "./dist/transports/index.js",
       "require": "./dist/transports/index.cjs"
+    },
+    "./oauth": {
+      "types": "./dist/oauth/index.d.ts",
+      "import": "./dist/oauth/index.js",
+      "require": "./dist/oauth/index.cjs"
     }
   },
   "files": [
@@ -91,7 +96,12 @@
     "mime",
     "attachments",
     "dkim",
-    "tls"
+    "tls",
+    "oauth",
+    "xoauth2",
+    "gmail",
+    "outlook",
+    "microsoft365"
   ],
   "repository": {
     "type": "git",

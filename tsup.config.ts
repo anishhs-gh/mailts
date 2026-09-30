@@ -9,6 +9,7 @@ export default defineConfig([
       'queue/index': 'src/queue/index.ts',
       'logger/index': 'src/logger/index.ts',
       'transports/index': 'src/transports/index.ts',
+      'oauth/index': 'src/oauth/index.ts',
     },
     format: ['esm', 'cjs'],
     dts: true,
