@@ -25,6 +25,8 @@ behaviour changes to check. Tracking issue: [#17](https://github.com/anishhs-gh/
 | `session.idle(cb)` | `cb({ seq })` on the session connection | `cb({ uid })` on a dedicated connection | Prefer `session.watch()` |
 | Non-network errors in the queue | Retried as `ECONN` | Not retried (`EQUEUE`, `retryable: false`) | — |
 | Custom headers | CR/LF stripped silently | Invalid header names / content types throw `MimeError` | Fix the input |
+| Addresses | Malformed addresses reached the transport | From/To/Cc/Bcc/Reply-To must look like `local@domain` (no spaces, brackets, quotes) — otherwise `send()` returns a `MimeError` | Validate or clean addresses before sending |
+| `path` attachments with no `attachmentPolicy` | Read silently | Still read, plus a one-time `MailtsWarning` on stderr | Set `attachmentPolicy` explicitly (`'allow'` keeps today's behaviour) |
 | `QueueStats` | — | New `scheduled` field; `QueueJob.status` may be `'scheduled'` | Update exhaustive switches |
 
 ## Persistent queue databases

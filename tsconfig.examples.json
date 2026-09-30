@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@mailts/core": ["src/index.ts"],
+      "@mailts/core/*": ["src/*/index.ts"],
+      "@mailts/trap": ["packages/trap/src/index.ts"],
+      "@mailts/testing": ["packages/testing/src/index.ts"]
+    }
+  },
+  "include": ["examples/**/*.ts"]
+}

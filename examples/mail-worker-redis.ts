@@ -9,7 +9,7 @@
  *   REDIS_URL=redis://localhost:6379 npx tsx examples/mail-worker-redis.ts
  */
 
-import { MailWorker } from '@mailts/core';
+import { MailWorker, encodeOptions, decodeOptions } from '@mailts/core';
 import type { QueueDriver, DriverMessage } from '@mailts/core';
 import type { EmailOptions } from '@mailts/core';
 
@@ -22,33 +22,53 @@ const PENDING  = 'mail:pending';
 const INFLIGHT = 'mail:inflight';
 const DLQ_KEY  = 'mail:dlq';
 
+interface Envelope { id: string; priority?: DriverMessage['priority']; data: string }
+
 class RedisDriver implements QueueDriver {
   private readonly redis = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379');
+  /** Driver id → exact raw element in the inflight list (LREM needs the element, not the id). */
+  private readonly inflight = new Map<string, string>();
 
   async dequeue(): Promise<DriverMessage | null> {
-    // BRPOPLPUSH: atomic move pending → inflight; survives process crash
-    // (message stays in inflight and can be recovered on restart)
+    // BRPOPLPUSH: atomic move pending → inflight; survives a crash (recover from
+    // INFLIGHT on start-up). Blocks up to 1 s, so the worker never spins.
     const raw = await this.redis.brpoplpush(PENDING, INFLIGHT, 1);
     if (!raw) return null;
-    return JSON.parse(raw) as DriverMessage;
+    const env = JSON.parse(raw) as Envelope;
+    this.inflight.set(env.id, raw);
+    // encodeOptions/decodeOptions keep Buffer attachments and Dates intact
+    return { id: env.id, priority: env.priority, data: decodeOptions(env.data) };
   }
 
   async ack(id: string): Promise<void> {
-    await this.redis.lrem(INFLIGHT, 1, id);
+    await this.finish(id);
   }
 
-  async nack(id: string, _reason?: Error): Promise<void> {
-    // Move from inflight → DLQ; external system handles re-drive
-    await this.redis.lmove(INFLIGHT, DLQ_KEY, 'LEFT', 'RIGHT');
-    console.error(`[nack] Job ${id} moved to ${DLQ_KEY}`);
+  async nack(id: string, reason?: Error): Promise<void> {
+    await this.finish(id, DLQ_KEY);
+    console.error(`[nack] ${id} → ${DLQ_KEY}: ${reason?.message ?? 'failed'}`);
   }
 
-  /** Enqueue a message from the producer side. */
+  /** Worker shutdown: hand unstarted messages back so another worker takes them now. */
+  async release(id: string): Promise<void> {
+    await this.finish(id, PENDING);
+  }
+
+  private async finish(id: string, moveTo?: string): Promise<void> {
+    const raw = this.inflight.get(id);
+    if (!raw) return;
+    this.inflight.delete(id);
+    const tx = this.redis.multi();
+    tx.lrem(INFLIGHT, 1, raw);
+    if (moveTo) tx.rpush(moveTo, raw);
+    await tx.exec();
+  }
+
+  /** Producer side. */
   async enqueue(data: EmailOptions, opts?: { priority?: DriverMessage['priority'] }): Promise<string> {
-    const id = crypto.randomUUID();
-    const msg: DriverMessage = { id, data, priority: opts?.priority };
-    await this.redis.lpush(PENDING, JSON.stringify(msg));
-    return id;
+    const env: Envelope = { id: crypto.randomUUID(), priority: opts?.priority, data: encodeOptions(data) };
+    await this.redis.lpush(PENDING, JSON.stringify(env));
+    return env.id;
   }
 
   async close(): Promise<void> {
@@ -70,6 +90,8 @@ const worker = new MailWorker(driver, {
       pass:  process.env['SMTP_PASS'] ?? '',
     },
   },
+  prefetch: 5,          // hold at most concurrency + 5 messages; the rest stay in Redis
+  idleDelayMs: 500,     // back-off when Redis is empty
   queue: {
     concurrency:  5,
     maxRetries:   3,
@@ -84,12 +106,13 @@ worker.on('dead',        (job) => console.error(`✗  ${job.id} — moved to Red
 worker.on('retry',       (job, attempt) => console.warn(`↺  ${job.id} attempt ${attempt}`));
 worker.on('cancelled',   (job) => console.log(`⊘  ${job.id} cancelled`));
 worker.on('interrupted', (job) => console.log(`⏸  ${job.id} interrupted → requeued`));
+worker.on('error',       (err) => console.error('driver error:', err.message)); // ack/nack/dequeue failures
 
 // ── Graceful shutdown ────────────────────────────────────────────────────────
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM — shutting down (5 s timeout)…');
-  await worker.shutdown(5_000);
+  await worker.shutdown(5_000);   // unstarted messages are released back to PENDING
   await driver.close();
   process.exit(0);
 });

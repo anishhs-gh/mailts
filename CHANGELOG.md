@@ -42,7 +42,8 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 - The pool handed broken connections (aborted, failed RSET) to the next caller and leaked abort listeners.
 - XOAUTH2 `334` error challenges poisoned the connection.
 - ical-only invites were rejected; `Attachment.encoding` was ignored; quoted-printable left trailing whitespace unprotected.
-- Envelope addresses with CR/LF or `<>` could inject SMTP commands.
+- Envelope addresses with CR/LF or `<>` could inject SMTP commands; malformed From/To/Cc/Bcc/Reply-To addresses are now rejected by the builder (also protecting HTTP transports).
+- HTTP transports re-read `path` attachments outside the attachment policy (with `{ root }`, relative paths resolved against the working directory); `MailTs` now resolves them once under the policy.
 
 ### Added
 
@@ -53,7 +54,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 - `session.watch()` / `MailboxWatcher` — new mail by UID on a dedicated connection with reconnect and catch-up.
 - `ImapSession` lazy connect, `reconnect`, `keepAliveMs`, `isConnected`; `ImapClient.noop()`, `fetchAttributes()`.
 - `EmailOptions.inReplyTo` / `references`; `replyTo` accepts a list.
-- `attachmentPolicy: 'allow' | 'deny' | { root }`.
+- `attachmentPolicy: 'allow' | 'deny' | { root }`. Leaving it unset behaves as `'allow'` but emits a one-time `MailtsWarning` (`MAILTS_ATTACHMENT_PATH_POLICY`) when a path is read — the default will become `'deny'`.
 - Queue: `enqueue(opts, { sendAt, id })`, `scheduled` state and stat, `get()`, `list()`, `maxRetryDelay`, `ShutdownResult`; `QueueDriver.release()` / `cancel()`; `MailWorker` `prefetch`, `idleDelayMs`, `use()`.
 - `SmtpClient.send()` returning accepted/rejected; `SMTPUTF8` and `BODY=8BITMIME` when required.
 - Errors: `ImapAuthError`, `ImapConnError`, `OAuthError`; `ImapError.responseCode`.
@@ -62,6 +63,12 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 - Node.js **20.18+** required (build target `node20`).
 - CI runs Node 20/22/24 and an integration suite against GreenMail (`npm run test:integration`).
+- `npm run typecheck` now also typechecks `examples/`.
+
+### Examples
+
+- New: `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `oauth-test.mjs` (interactive live smoke test against the built package).
+- Updated for 0.5: `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
 
 ## [0.4.0] — 2026-06-22
 

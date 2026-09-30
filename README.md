@@ -862,12 +862,14 @@ const mail = new MailTs({
   smtp,
   attachmentPolicy: 'deny',          // or { root: '/srv/uploads' } — symlinks resolved, escapes rejected
 });
+// Unset attachmentPolicy behaves as 'allow' and warns once when a path is read;
+// the default will become 'deny' in a future release.
 // requireTLS defaults to true when authenticating (loopback hosts exempt); SMTP and IMAP
 // refuse to send credentials if STARTTLS is missing.
 ```
 
-Header values, filenames, content types, IMAP flags, sequence sets and envelope addresses are encoded or
-validated — malformed input is rejected instead of being written to the wire.
+Header values, filenames, content types, IMAP flags, sequence sets and all addresses (From/To/Cc/Bcc/Reply-To)
+are encoded or validated — malformed input is rejected with `MimeError` instead of being written to the wire.
 
 ---
 
@@ -959,6 +961,33 @@ const mail = new MailTs({ smtp: { ... }, devMode: true });
 // send() resolves immediately — nothing is transmitted
 await mail.send({ ... });
 ```
+
+---
+
+## Examples
+
+Runnable examples live in [`examples/`](examples) (run with `npx tsx examples/<file>.ts`; all are typechecked in CI):
+
+| Example | Shows |
+|---|---|
+| [`basic-send.ts`](examples/basic-send.ts) | Plain-text + HTML send |
+| [`oauth-cli.ts`](examples/oauth-cli.ts) | Google / Microsoft sign-in for CLIs, refresh-token storage, sign out |
+| [`oauth-web-server.ts`](examples/oauth-web-server.ts) | "Connect your mailbox" web flow for hosted apps |
+| [`oauth-test.mjs`](examples/oauth-test.mjs) | Interactive live test: sign in → read → send → log out (`node examples/oauth-test.mjs` after `npm run build`) |
+| [`xoauth2.ts`](examples/xoauth2.ts) | XOAUTH2 SMTP + IMAP with automatic token refresh |
+| [`imap-read.ts`](examples/imap-read.ts) | Unread mail, full bodies, `watch()` for new mail |
+| [`imap-manage.ts`](examples/imap-manage.ts) | Flags, move, delete, drafts, CONDSTORE, mailbox management |
+| [`reply-and-save-to-sent.ts`](examples/reply-and-save-to-sent.ts) | Threaded replies, save to Sent, drafts |
+| [`parse-eml.ts`](examples/parse-eml.ts) | `parseMessage()` for `.eml` / raw messages |
+| [`untrusted-input.ts`](examples/untrusted-input.ts) | `attachmentPolicy` and injection guards for AI agents / forms |
+| [`queue-lifecycle.ts`](examples/queue-lifecycle.ts) | Priority, pause/resume, cancel/interrupt/abort, shutdown modes, `sendAt` |
+| [`queue-persistence.ts`](examples/queue-persistence.ts) | Crash-safe SQLite queue |
+| [`queue-and-dlq.ts`](examples/queue-and-dlq.ts) | Retries, dead-letter queue, telemetry |
+| [`mail-worker-redis.ts`](examples/mail-worker-redis.ts) | External queue driver (Redis) with `MailWorker` |
+| [`attachments-and-inline.ts`](examples/attachments-and-inline.ts) · [`ical-invite.ts`](examples/ical-invite.ts) · [`cc-bcc-replyto.ts`](examples/cc-bcc-replyto.ts) | Message building |
+| [`transports.ts`](examples/transports.ts) · [`dkim-and-proxy.ts`](examples/dkim-and-proxy.ts) · [`smtp-pool-config.ts`](examples/smtp-pool-config.ts) | Delivery options |
+| [`middleware-and-devmode.ts`](examples/middleware-and-devmode.ts) · [`aliases-and-templates.ts`](examples/aliases-and-templates.ts) · [`streaming-logs.ts`](examples/streaming-logs.ts) · [`health-checks.ts`](examples/health-checks.ts) | App integration |
+| [`trap-local-dev.ts`](examples/trap-local-dev.ts) · [`trap-testing.test.ts`](examples/trap-testing.test.ts) | Local dev and tests with `@mailts/trap` / `@mailts/testing` |
 
 ---
 

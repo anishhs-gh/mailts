@@ -1,5 +1,5 @@
 /**
- * IMAP message management — flags, copy, move, delete, append, CONDSTORE sync.
+ * IMAP message management — flags, copy, move, delete, drafts (appendMessage), CONDSTORE sync.
  *
  * Run:  IMAP_PASS=<app-password> npx tsx examples/imap-manage.ts
  */
@@ -79,28 +79,27 @@ if (uids.length >= 4) {
 const sent = await session.fetch({ mailbox: 'Sent', limit: 5 });
 console.log(`\nSent (last 5): ${sent.map(m => m.envelope.subject).join(', ')}`);
 
-// ── Append a message to Sent / Drafts ────────────────────────────────────
-// Useful for saving a copy of messages sent via SMTP.
-const raw = [
-  `From: you@gmail.com`,
-  `To: colleague@example.com`,
-  `Subject: Meeting agenda`,
-  `Date: ${new Date().toUTCString()}`,
-  `MIME-Version: 1.0`,
-  `Content-Type: text/plain`,
-  ``,
-  `Agenda:\n1. Q2 review\n2. Roadmap`,
-].join('\r\n');
+// ── Save drafts / copies to special-use mailboxes ─────────────────────────
+// findMailbox() uses RFC 6154 flags (\\Sent, \\Drafts, …) with common-name fallback.
+const drafts = await session.findMailbox('\\Drafts') ?? 'Drafts';
+const draft = await session.appendMessage(drafts, {
+  from: 'you@gmail.com',
+  to: 'colleague@example.com',
+  subject: 'Meeting agenda',
+  text: 'Agenda:\n1. Q2 review\n2. Roadmap',
+}, ['\\Draft']);
+console.log(`\nSaved draft to ${drafts}${draft.uid ? ` as UID ${draft.uid}` : ''} (${draft.messageId})`);
 
-const appended = await session.append('Sent', Buffer.from(raw), ['\\Seen']);
-if (appended.uid) console.log(`\nAppended to Sent as UID ${appended.uid}`);
+// Raw RFC 5322 bytes work too, e.g. from mail.build() or another mailbox
+const built = await mail.build({ from: 'you@gmail.com', to: 'x@example.com', subject: 'Copy', text: 'hi' });
+await session.append(drafts, built.raw, ['\\Draft']);
 
 // ── CONDSTORE: incremental sync (only messages changed since last modseq) ─
 // highestModSeq is returned by open() on servers that advertise CONDSTORE.
 const status = await session.open('INBOX');
 if (status.highestModSeq) {
-  const lastKnownModSeq = status.highestModSeq - 1n;   // in practice, store this across runs
-  const changed = await session.fetchChanged(Number(lastKnownModSeq));
+  const lastKnownModSeq = status.highestModSeq - 1;   // in practice, store this across runs
+  const changed = await session.fetchChanged(lastKnownModSeq);
   console.log(`\nCONDSTORE: ${changed.length} messages changed since modseq ${lastKnownModSeq}`);
 }
 
