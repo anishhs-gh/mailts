@@ -256,4 +256,67 @@ describe.skipIf(!HAS_SQLITE)('SqliteQueue (Node 22+)', () => {
       .toThrow(/stream/);
     await q.shutdown();
   });
+
+  it('migrates a 0.4 database and delivers its rows once with original ids and attachments', async () => {
+    const { DatabaseSync } = (await import('node:sqlite')) as any;
+    const db = new DatabaseSync(dbPath);
+    // Exact 0.4.0 schema, plus a row written the 0.4 way (JSON.stringify(options))
+    db.exec(`CREATE TABLE queue_jobs (
+      id TEXT PRIMARY KEY, options TEXT NOT NULL, status TEXT NOT NULL, priority TEXT NOT NULL DEFAULT 'normal',
+      attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_attempt_at TEXT NOT NULL DEFAULT '',
+      errors TEXT NOT NULL DEFAULT '[]', cancelled_at TEXT
+    ); CREATE TABLE queue_control (job_id TEXT PRIMARY KEY, action TEXT NOT NULL, created_at TEXT NOT NULL);`);
+    const legacyOptions = JSON.stringify({
+      ...baseOpts, date: new Date('2026-01-01T00:00:00Z'),
+      attachments: [{ filename: 'a.bin', content: Buffer.from([1, 2, 3]) }],
+    });
+    db.prepare(`INSERT INTO queue_jobs (id, options, status, priority, attempts, created_at) VALUES (?,?,?,?,?,?)`)
+      .run('legacy-1', legacyOptions, 'running', 'high', 1, new Date().toISOString());
+    db.close();
+
+    const seen: Array<{ content: unknown; date: unknown }> = [];
+    const q = new SqliteQueue(dbPath, {}, undefined, async (o) => {
+      seen.push({ content: o.attachments![0]!.content, date: o.date });
+      return ok;
+    });
+    const restored = q.get('legacy-1');
+    expect(restored?.priority).toBe('high');
+    await q.drain();
+    await q.shutdown();
+
+    expect(seen).toHaveLength(1);
+    expect([...(seen[0]!.content as Buffer)]).toEqual([1, 2, 3]);
+    expect(seen[0]!.date).toBeInstanceOf(Date);
+    const check = new DatabaseSync(dbPath);
+    expect(check.prepare('PRAGMA user_version').get().user_version).toBe(2);
+    expect(check.prepare(`SELECT status, attempts FROM queue_jobs WHERE id='legacy-1'`).get()).toEqual({ status: 'success', attempts: 2 });
+    check.close();
+  });
+
+  it('applies cross-process cancel requests from the CLI', async () => {
+    const q = new SqliteQueue(dbPath, {});
+    q.pause();
+    const job = q.enqueue(baseOpts);
+    SqliteQueue.requestCancel(dbPath, job.id);
+    (q as unknown as { poll(): void }).poll();
+    expect(job.status).toBe('cancelled');
+    expect(SqliteQueue.readStats(dbPath).cancelled).toBe(1);
+    await q.shutdown();
+  });
+
+  it('keeps retry schedules across restarts', async () => {
+    const { SmtpConnError } = await import('../../../src/errors.js');
+    const q1 = new SqliteQueue(dbPath, { retryDelay: 60_000, jitter: false }, undefined,
+      async () => ({ ok: false, error: new SmtpConnError('down'), attempts: 1 }));
+    q1.enqueue(baseOpts);
+    await new Promise(r => setTimeout(r, 20));
+    expect(q1.stats().scheduled).toBe(1);
+    await q1.shutdown();
+
+    const q2 = new SqliteQueue(dbPath, {}, undefined, async () => ok);
+    const [job] = q2.list();
+    expect(job!.status).toBe('scheduled');
+    expect(job!.notBefore!.getTime()).toBeGreaterThan(Date.now() + 50_000);
+    await q2.shutdown({ pending: 'keep' });
+  });
 });
