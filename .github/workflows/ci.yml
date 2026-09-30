@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [18, 20]
+        node: [20, 22, 24]
 
     steps:
       - uses: actions/checkout@v4
@@ -43,3 +43,33 @@ jobs:
 
       - name: Build workspaces
         run: npm run build --workspaces --if-present
+
+  integration:
+    name: Integration (GreenMail, Node 22)
+    runs-on: ubuntu-latest
+    env:
+      GREENMAIL_CACHE: ~/.cache/greenmail
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache GreenMail
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/greenmail
+          key: greenmail-2.1.14
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Integration tests
+        run: npm run test:integration
