@@ -1,17 +1,14 @@
 import type { TLSSocketOptions } from 'tls';
 import type { DkimConfig } from '../core/Dkim.js';
 import type { ProxyConfig } from '../smtp/SmtpProxy.js';
+import type { MailAuth, MailAuthType } from './auth.js';
 
 export type { DkimConfig, ProxyConfig };
 
-export type SmtpAuthType = 'plain' | 'login' | 'xoauth2';
+export type SmtpAuthType = MailAuthType;
 
-export interface SmtpAuth {
-  readonly type: SmtpAuthType;
-  readonly user: string;
-  readonly pass?: string;
-  readonly token?: string;
-}
+/** SMTP credentials — see `MailAuth`. */
+export type SmtpAuth = MailAuth;
 
 export interface SmtpPoolConfig {
   maxConnections?: number;
@@ -38,6 +35,20 @@ export interface SmtpConfig {
    */
   socketTimeout?: number;
   tls?: TLSSocketOptions;
+  /**
+   * Refuse to authenticate or send over an unencrypted connection. When the
+   * server does not offer STARTTLS on a plain connection, `connect()` fails
+   * with `SmtpTlsError` instead of sending credentials in clear text.
+   * Defaults to `true` when `auth` is set, except for loopback hosts
+   * (`localhost`, `127.0.0.1`, `::1`) such as local test servers and bridges.
+   */
+  requireTLS?: boolean;
+  /**
+   * When `true` (default `false`), a send fails if the server rejects any
+   * recipient. Otherwise the message is delivered to the accepted recipients
+   * and the rejected ones are reported in `SendResult.rejected`.
+   */
+  allRecipientsRequired?: boolean;
   /**
    * Set to `false` to disable connection pooling — a fresh connection is
    * opened and closed for every send.  The process exits naturally after the

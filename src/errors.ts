@@ -103,9 +103,29 @@ export class SmtpTlsError extends MailTsError {
 
 /** Thrown for IMAP protocol or connection errors. */
 export class ImapError extends MailTsError {
-  constructor(message: string, retryable = false) {
-    super(message, 'EIMAP', retryable);
+  /** Server response code, e.g. `AUTHENTICATIONFAILED`, `TRYCREATE`, `NONEXISTENT`. */
+  readonly responseCode?: string;
+
+  constructor(message: string, retryable = false, code: ErrorCode = 'EIMAP', responseCode?: string) {
+    super(message, code, retryable);
     this.name = 'ImapError';
+    this.responseCode = responseCode;
+  }
+}
+
+/** Thrown when IMAP authentication fails. Never retryable. */
+export class ImapAuthError extends ImapError {
+  constructor(message: string, responseCode?: string) {
+    super(message, false, 'EAUTH', responseCode);
+    this.name = 'ImapAuthError';
+  }
+}
+
+/** Thrown when the IMAP connection closes or times out mid-command. Retryable. */
+export class ImapConnError extends ImapError {
+  constructor(message: string) {
+    super(message, true, 'ECONN');
+    this.name = 'ImapConnError';
   }
 }
 
@@ -114,6 +134,18 @@ export class QueueError extends MailTsError {
   constructor(message: string) {
     super(message, 'EQUEUE', false);
     this.name = 'QueueError';
+  }
+}
+
+/** Thrown when an OAuth token request or authorization flow fails. */
+export class OAuthError extends MailTsError {
+  /** OAuth error code from the provider, e.g. `invalid_grant`. */
+  readonly oauthCode?: string;
+
+  constructor(message: string, oauthCode?: string, retryable = false) {
+    super(message, 'EAUTH', retryable);
+    this.name = 'OAuthError';
+    this.oauthCode = oauthCode;
   }
 }
 

@@ -1,4 +1,5 @@
-import { decodeRfc2047 } from './ImapParser.js';
+import { tokenize, tokStr, tokNum, tokList, isNil, type ImapToken } from './ImapTokenizer.js';
+import { parseHeaderValue } from '../core/MimeParser.js';
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -20,6 +21,8 @@ export interface BodyLeaf {
   filename?: string;
   /** "attachment" | "inline" | undefined */
   disposition?: string;
+  /** For `message/rfc822` parts: the structure of the enclosed message. */
+  body?: BodyNode;
 }
 
 /** A multipart container — holds an ordered list of child BodyNodes. */
@@ -35,165 +38,88 @@ export interface BodyMultipart {
 
 export type BodyNode = BodyLeaf | BodyMultipart;
 
-// ── Parser entry point ─────────────────────────────────────────────────────────
+// ── Entry points ───────────────────────────────────────────────────────────────
 
 /**
- * Parse a raw BODYSTRUCTURE response string into a typed BodyNode tree.
+ * Parse a raw BODYSTRUCTURE into a typed BodyNode tree.
  *
- * The input should be the parenthesised content after the `BODYSTRUCTURE`
- * keyword, e.g. the full untagged FETCH data line works too — the parser
- * locates the BODYSTRUCTURE token automatically.
+ * Accepts the parenthesised structure itself, or a whole FETCH response line —
+ * the `BODYSTRUCTURE` item is located automatically.
  */
 export function parseBodyStructure(raw: string): BodyNode {
-  const str = extractBodyStructureToken(raw);
-  const tokens = tokenise(str);
-  const [node] = parseNode(tokens, 0, '');
-  return node;
+  const tokens = tokenize(raw);
+  const list = findBodyStructure(tokens) ?? tokens.find(t => t.type === 'list');
+  if (!list) throw new Error('No BODYSTRUCTURE found');
+  return bodyStructureFromToken(list, '');
 }
 
-// ── Tokeniser ──────────────────────────────────────────────────────────────────
-
-type Token = string | Token[];
-
-function tokenise(str: string): Token[] {
-  const result: Token[] = [];
-  let i = skipWS(str, 0);
-
-  while (i < str.length) {
-    if (str[i] === '(') {
-      const [inner, next] = readList(str, i);
-      result.push(inner);
-      i = next;
-    } else if (str[i] === '"') {
-      const [val, next] = readQuoted(str, i);
-      result.push(val);
-      i = next;
-    } else {
-      const [val, next] = readAtom(str, i);
-      result.push(val);
-      i = next;
+function findBodyStructure(tokens: ImapToken[]): ImapToken | undefined {
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    const s = tokStr(t)?.toUpperCase();
+    if ((s === 'BODYSTRUCTURE' || s === 'BODY') && tokens[i + 1]?.type === 'list') return tokens[i + 1];
+    if (t.type === 'list') {
+      const inner = findBodyStructure(t.items);
+      if (inner) return inner;
     }
-    i = skipWS(str, i);
   }
-
-  return result;
+  return undefined;
 }
 
-function readList(str: string, start: number): [Token[], number] {
-  const items: Token[] = [];
-  let i = skipWS(str, start + 1); // skip opening '('
-
-  while (i < str.length && str[i] !== ')') {
-    if (str[i] === '(') {
-      const [inner, next] = readList(str, i);
-      items.push(inner);
-      i = next;
-    } else if (str[i] === '"') {
-      const [val, next] = readQuoted(str, i);
-      items.push(val);
-      i = next;
-    } else {
-      const [val, next] = readAtom(str, i);
-      items.push(val);
-      i = next;
-    }
-    i = skipWS(str, i);
-  }
-
-  return [items, i + 1]; // skip closing ')'
+/** Build a BodyNode from a tokenized `body` production (RFC 3501 §9). */
+export function bodyStructureFromToken(tok: ImapToken, sectionPrefix: string): BodyNode {
+  const items = tokList(tok) ?? [];
+  if (items[0]?.type === 'list') return parseMultipart(items, sectionPrefix);
+  return parseLeaf(items, sectionPrefix || '1');
 }
 
-function readQuoted(str: string, start: number): [string, number] {
-  let val = '';
-  let i = start + 1; // skip opening '"'
-  while (i < str.length && str[i] !== '"') {
-    if (str[i] === '\\') { i++; }
-    val += str[i++];
-  }
-  return [val, i + 1]; // skip closing '"'
-}
-
-function readAtom(str: string, start: number): [string, number] {
-  let i = start;
-  while (i < str.length && str[i] !== ' ' && str[i] !== ')' && str[i] !== '(') i++;
-  return [str.slice(start, i), i];
-}
-
-function skipWS(str: string, i: number): number {
-  while (i < str.length && str[i] === ' ') i++;
-  return i;
-}
-
-// ── Node parser ────────────────────────────────────────────────────────────────
-
-function parseNode(tokens: Token[], index: number, sectionPrefix: string): [BodyNode, number] {
-  const token = tokens[index];
-
-  // Multipart: first token is itself a list (nested part)
-  if (Array.isArray(token)) {
-    return parseMultipart(tokens, index, sectionPrefix);
-  }
-
-  // Leaf
-  return [parseLeaf(tokens as string[], index, sectionPrefix || '1'), tokens.length];
-}
-
-function parseMultipart(tokens: Token[], startIndex: number, sectionPrefix: string): [BodyMultipart, number] {
+function parseMultipart(items: ImapToken[], prefix: string): BodyMultipart {
   const parts: BodyNode[] = [];
-  let i = startIndex;
-  let partNum = 1;
-
-  // Collect all leading list-tokens — each is a child part
-  while (i < tokens.length && Array.isArray(tokens[i])) {
-    const childSection = sectionPrefix ? `${sectionPrefix}.${partNum}` : String(partNum);
-    const childTokens = tokens[i] as Token[];
-    const [child] = parseNode(childTokens, 0, childSection);
-    parts.push(child);
-    i++;
-    partNum++;
-  }
-
-  // Next atom after the parts is the multipart subtype ("mixed", "alternative", …)
-  const subtype = isNil(tokens[i]) ? 'mixed' : String(tokens[i] ?? 'mixed').toLowerCase();
-  i++;
-
-  // Extension data: params list may follow — extract boundary from it
-  let boundary = '';
-  if (i < tokens.length && Array.isArray(tokens[i])) {
-    boundary = extractParam(tokens[i] as Token[], 'boundary') ?? '';
+  let i = 0;
+  while (i < items.length && items[i]!.type === 'list') {
+    const section = prefix ? `${prefix}.${i + 1}` : String(i + 1);
+    parts.push(bodyStructureFromToken(items[i]!, section));
     i++;
   }
-
-  return [
-    {
-      type: 'multipart',
-      section: sectionPrefix,
-      contentType: `multipart/${subtype}`,
-      boundary,
-      parts,
-    },
-    i,
-  ];
+  const subtype = (tokStr(items[i]) ?? 'mixed').toLowerCase();
+  const params = paramsFromList(items[i + 1]);
+  return {
+    type: 'multipart',
+    section: prefix,
+    contentType: `multipart/${subtype}`,
+    boundary: params['boundary'] ?? '',
+    parts,
+  };
 }
 
-function parseLeaf(tokens: string[], _startIndex: number, section: string): BodyLeaf {
-  // Positional fields per RFC 3501 §7.4.2:
-  // 0: type  1: subtype  2: params  3: content-id  4: description
-  // 5: encoding  6: size  7: lines (text/* only)  8: md5
-  // 9: disposition  10: language
-  const type    = isNil(tokens[0]) ? 'application' : tokens[0]!.toLowerCase();
-  const subtype = isNil(tokens[1]) ? 'octet-stream' : tokens[1]!.toLowerCase();
-  const params  = tokens[2] ?? '';
-  const contentId   = isNil(tokens[3]) ? undefined : tokens[3]!.replace(/^<|>$/g, '');
-  const encoding    = isNil(tokens[5]) ? '7bit' : tokens[5]!.toLowerCase();
-  const size        = isNil(tokens[6]) ? 0 : parseInt(tokens[6]!, 10);
-  const linesRaw    = tokens[7];
-  const dispRaw     = tokens[9];
+function parseLeaf(f: ImapToken[], section: string): BodyLeaf {
+  // body-type-1part (RFC 3501 §9):
+  //  0 type 1 subtype 2 params 3 id 4 description 5 encoding 6 size
+  //  text:    7 lines,                      then ext: md5 dsp lang loc
+  //  message: 7 envelope 8 body 9 lines,    then ext
+  //  basic:                                  then ext at 7
+  const type = (tokStr(f[0]) ?? 'application').toLowerCase();
+  const subtype = (tokStr(f[1]) ?? 'octet-stream').toLowerCase();
+  const params = paramsFromList(f[2]);
+  const contentId = tokStr(f[3])?.replace(/^<|>$/g, '');
+  const encoding = (tokStr(f[5]) ?? '7bit').toLowerCase();
+  const size = tokNum(f[6]) ?? 0;
 
-  const charset  = extractParamFromString(params, 'charset');
-  const filename = extractParamFromString(params, 'name') ??
-                   extractDispositionParam(dispRaw, 'filename');
-  const disposition = extractDispositionType(dispRaw);
+  const isMessage = type === 'message' && (subtype === 'rfc822' || subtype === 'global');
+  let extStart = 7;
+  let lines: number | undefined;
+  let body: BodyNode | undefined;
+  if (type === 'text') {
+    lines = tokNum(f[7]);
+    extStart = 8;
+  } else if (isMessage && f[8]?.type === 'list') {
+    body = bodyStructureFromToken(f[8], section);
+    lines = tokNum(f[9]);
+    extStart = 10;
+  }
+
+  const dsp = findDisposition(f, extStart);
+  const filename = dsp?.params['filename'] ?? params['name'];
 
   const leaf: BodyLeaf = {
     type: 'leaf',
@@ -201,80 +127,47 @@ function parseLeaf(tokens: string[], _startIndex: number, section: string): Body
     contentType: `${type}/${subtype}`,
     encoding,
     size,
-    contentId,
-    disposition,
+    contentId: contentId || undefined,
+    disposition: dsp?.type,
   };
-
-  if (charset) leaf.charset = charset;
-  if (filename) leaf.filename = decodeRfc2047(filename);
-  if (type === 'text' && !isNil(linesRaw)) leaf.lines = parseInt(linesRaw!, 10);
-
+  if (params['charset']) leaf.charset = params['charset'];
+  if (filename) leaf.filename = filename;
+  if (type === 'text' && lines !== undefined) leaf.lines = lines;
+  if (body) leaf.body = body;
   return leaf;
 }
 
-// ── Param helpers ──────────────────────────────────────────────────────────────
-
-function extractParam(tokens: Token[], name: string): string | undefined {
-  const flat = tokens.map(t => (Array.isArray(t) ? '' : t));
-  for (let i = 0; i < flat.length - 1; i++) {
-    if (flat[i]!.toLowerCase() === name.toLowerCase()) return flat[i + 1] ?? undefined;
+/**
+ * Locate body-fld-dsp: `(type (params))` or NIL. The RFC position is tried
+ * first; some servers insert extra NILs, so later list tokens are scanned too.
+ */
+function findDisposition(
+  f: ImapToken[],
+  start: number,
+): { type: string; params: Record<string, string> } | undefined {
+  for (let i = start; i < f.length; i++) {
+    const l = tokList(f[i]);
+    if (!l || l.length < 1) continue;
+    const t = tokStr(l[0]);
+    if (t && (isNil(l[1]) || l[1]?.type === 'list')) {
+      return { type: t.toLowerCase(), params: paramsFromList(l[1]) };
+    }
   }
   return undefined;
 }
 
-function extractParamFromString(raw: string | string[] | Token, name: string): string | undefined {
-  if (Array.isArray(raw)) return extractParam(raw as Token[], name);
-  if (typeof raw !== 'string' || isNil(raw)) return undefined;
-  const re = new RegExp(`${name}\\s*=\\s*"?([^"\\s;]+)"?`, 'i');
-  const m = raw.match(re);
-  return m ? m[1] : undefined;
-}
-
-function extractDispositionType(raw: string | string[] | Token | undefined): string | undefined {
-  if (!raw) return undefined;
-  if (Array.isArray(raw)) {
-    const first = (raw as Token[])[0];
-    if (typeof first === 'string' && !isNil(first)) return first.toLowerCase();
-    return undefined;
+/** `("name" "value" …)` → lower-cased key map, RFC 2231/2047 decoded. */
+function paramsFromList(tok: ImapToken | undefined): Record<string, string> {
+  const l = tokList(tok);
+  if (!l) return {};
+  // Re-serialise as a header parameter string so RFC 2231 continuations
+  // (name*0*, name*1*) are merged by the shared MIME parameter parser.
+  const segs: string[] = [];
+  for (let i = 0; i + 1 < l.length; i += 2) {
+    const k = tokStr(l[i]);
+    const v = tokStr(l[i + 1]);
+    if (!k || v === undefined) continue;
+    segs.push(`${k}="${v.replace(/[\\"]/g, m => `\\${m}`)}"`);
   }
-  if (typeof raw === 'string' && !isNil(raw)) return raw.toLowerCase();
-  return undefined;
-}
-
-function extractDispositionParam(
-  raw: string | string[] | Token | undefined,
-  name: string,
-): string | undefined {
-  if (!raw || !Array.isArray(raw)) return undefined;
-  return extractParam(raw as Token[], name);
-}
-
-// ── BODYSTRUCTURE token extractor ──────────────────────────────────────────────
-
-function extractBodyStructureToken(raw: string): string {
-  const upper = raw.toUpperCase();
-  const idx = upper.indexOf('BODYSTRUCTURE');
-  if (idx !== -1) {
-    const after = raw.slice(idx + 'BODYSTRUCTURE'.length).trimStart();
-    if (after.startsWith('(')) return after.slice(1, findMatchingParen(after, 0));
-  }
-  // Assume raw is already the bare parenthesised content
-  if (raw.trimStart().startsWith('(')) {
-    const s = raw.trimStart();
-    return s.slice(1, findMatchingParen(s, 0));
-  }
-  return raw;
-}
-
-function findMatchingParen(str: string, start: number): number {
-  let depth = 0;
-  for (let i = start; i < str.length; i++) {
-    if (str[i] === '(') depth++;
-    else if (str[i] === ')') { depth--; if (depth === 0) return i; }
-  }
-  return str.length;
-}
-
-function isNil(v: unknown): boolean {
-  return v === undefined || v === null || (typeof v === 'string' && v.toUpperCase() === 'NIL');
+  return parseHeaderValue(`x; ${segs.join('; ')}`).params;
 }

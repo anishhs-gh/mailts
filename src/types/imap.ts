@@ -1,16 +1,13 @@
 import type { TLSSocketOptions } from 'tls';
 import type { EmailAddress } from './core.js';
+import type { MailAuth } from './auth.js';
 
 export interface ImapConfig {
   host: string;
   port?: number;
   secure?: boolean;
-  auth: {
-    readonly type: 'plain' | 'login' | 'xoauth2';
-    readonly user: string;
-    readonly pass?: string;
-    readonly token?: string;
-  };
+  /** Credentials — password (`plain`/`login`) or OAuth (`xoauth2` with `token` or `getToken`). */
+  auth: MailAuth;
   /**
    * Milliseconds to wait for the TCP/TLS handshake to complete.
    * @default 10_000
@@ -22,14 +19,39 @@ export interface ImapConfig {
    */
   socketTimeout?: number;
   tls?: TLSSocketOptions;
+  /**
+   * On a plain (non-`secure`) connection, upgrade with STARTTLS when offered and
+   * refuse to log in in clear text otherwise. Defaults to `true`, except for
+   * loopback hosts (`localhost`, `127.0.0.1`, `::1`), e.g. Proton Bridge.
+   */
+  requireTLS?: boolean;
+  /**
+   * `ImapSession` only: reconnect automatically when the connection drops.
+   * The next operation re-connects, re-authenticates (calling `getToken` again)
+   * and re-selects the mailbox. `false` disables. @default { retries: 3, delayMs: 1000 }
+   */
+  reconnect?: false | { retries?: number; delayMs?: number };
+  /**
+   * `ImapSession` only: send NOOP after this many ms of inactivity so NATs and
+   * servers don't drop an idle connection. `0` disables. @default 0
+   */
+  keepAliveMs?: number;
 }
 
 export interface ImapMailboxStatus {
   name: string;
   flags: string[];
+  /** Flags the client may change permanently (`\\*` = new keywords allowed). */
+  permanentFlags?: string[];
   exists: number;
   recent: number;
-  unseen: number;
+  /**
+   * Number of unseen messages. Only present when counted — `ImapSession.open()`
+   * does; a plain SELECT does not report it.
+   */
+  unseen?: number;
+  /** Sequence number of the first unseen message (`[UNSEEN n]` from SELECT). */
+  firstUnseen?: number;
   uidValidity: number;
   uidNext: number;
   readOnly: boolean;
@@ -48,6 +70,11 @@ export interface ImapEnvelope {
   bcc: EmailAddress[];
   inReplyTo: string | null;
   messageId: string | null;
+  /**
+   * Message-IDs from the `References` header, oldest first. Populated by
+   * `fetch({ bodies })`, `fetch({ headers: ['references'] })` and `parseMessage()`.
+   */
+  references?: string[];
 }
 
 export interface ImapBodyPart {
@@ -121,12 +148,24 @@ export interface ImapFetchOptions {
    */
   mailbox?: string;
   seen?: boolean;
+  /** Additional search criteria (ignored when `uids` is given). */
+  search?: ImapSearchCriteria;
   uids?: number[];
   seq?: string;
+  /** Return only the newest `limit` matches (by UID). */
   limit?: number;
+  /** Set `\\Seen` on the fetched messages. Fetching never marks mail read otherwise. */
   markSeen?: boolean;
-  /** Fetch full RFC822 message and parse the complete MIME body (text, html, attachments). */
+  /**
+   * Fetch the full message (`BODY.PEEK[]`, never sets `\\Seen`) and parse the
+   * complete MIME body (text, html, attachments) plus `envelope.references`.
+   */
   bodies?: boolean;
+  /**
+   * Extra header fields to fetch, e.g. `['References']` — populates
+   * `envelope.references` without downloading the body.
+   */
+  headers?: string[];
   /** Fetch BODYSTRUCTURE only — populates `message.structure`, no body content transferred. */
   structure?: boolean;
   /**
@@ -164,7 +203,11 @@ export interface ImapSearchCriteria {
 }
 
 export interface ImapListEntry {
+  /** Mailbox name (modified UTF-7 decoded). */
   name: string;
+  /** Hierarchy delimiter; `''` when the server reports NIL (flat namespace). */
   delimiter: string;
   flags: string[];
+  /** RFC 6154 special-use attribute, e.g. `\\Sent`, `\\Drafts`, `\\Trash`. */
+  specialUse?: string;
 }
