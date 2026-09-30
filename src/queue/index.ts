@@ -6,3 +6,6 @@ export type { ControlReason } from './JobController.js';
 export { MailWorker } from './MailWorker.js';
 export type { MailWorkerConfig } from './MailWorker.js';
 export type { QueueDriver, DriverMessage } from './QueueDriver.js';
+export { SqliteQueue, resolveQueueDbPath } from './SqliteQueue.js';
+export { encodeOptions, decodeOptions, encodeJob, decodeJob, JOB_CODEC_VERSION } from './JobCodec.js';
+export type { SendFn } from './MailQueue.js';

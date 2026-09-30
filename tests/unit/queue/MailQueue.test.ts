@@ -365,7 +365,7 @@ describe('MailQueue — abort', () => {
 // ── shutdown ──────────────────────────────────────────────────────────────────
 
 describe('MailQueue — shutdown', () => {
-  it('shutdown() cancels all pending and waits for running', async () => {
+  it("shutdown({ pending: 'cancel' }) cancels pending and waits for running", async () => {
     const q = new MailQueue({ concurrency: 1, maxRetries: 0 });
     let sendCalled = 0;
     q.setSendFn(async () => { sendCalled++; await new Promise(r => setTimeout(r, 30)); return okResult; });
@@ -377,7 +377,7 @@ describe('MailQueue — shutdown', () => {
     // Small delay so the first job starts
     await new Promise(r => setTimeout(r, 5));
 
-    await q.shutdown();
+    await q.shutdown({ pending: 'cancel' });
 
     expect(sendCalled).toBe(1);            // only the first job ran
     expect(q.stats().cancelled).toBe(2);   // the two pending ones were cancelled
@@ -400,5 +400,93 @@ describe('MailQueue — shutdown', () => {
 
     await q.shutdown(50); // 50ms timeout → should abort the slow job
     // No hanging — test completes
+  });
+
+  it('shutdown() on an in-memory queue delivers pending mail by default (regression)', async () => {
+    const q = new MailQueue({ concurrency: 1, maxRetries: 0 });
+    let sent = 0;
+    q.setSendFn(async () => { sent++; await new Promise(r => setTimeout(r, 5)); return okResult; });
+    q.enqueue(baseOptions);
+    q.enqueue(baseOptions);
+    q.enqueue(baseOptions);
+    const res = await q.shutdown();
+    expect(sent).toBe(3);
+    expect(res).toEqual({ cancelled: 0, remaining: 0 });
+    expect(() => q.enqueue(baseOptions)).toThrow(/shut down/);
+  });
+
+  it("shutdown({ pending: 'keep' }) leaves pending jobs untouched", async () => {
+    const q = new MailQueue({ concurrency: 1 });
+    q.setSendFn(async () => { await new Promise(r => setTimeout(r, 20)); return okResult; });
+    q.enqueue(baseOptions);
+    q.enqueue(baseOptions);
+    await new Promise(r => setTimeout(r, 5));
+    const res = await q.shutdown({ pending: 'keep' });
+    expect(res).toEqual({ cancelled: 0, remaining: 1 });
+    expect(q.stats().cancelled).toBe(0);
+  });
+
+  it('shutdown(timeout) never hangs when a running job is aborted (regression)', async () => {
+    const q = new MailQueue({ concurrency: 1, maxRetries: 3, retryDelay: 10, jobTimeout: 60_000 });
+    q.setSendFn((_o, signal) => new Promise((_r, reject) => {
+      signal?.addEventListener('abort', () => reject(new Error('stopped')), { once: true });
+    }));
+    q.enqueue(baseOptions);
+    await new Promise(r => setTimeout(r, 5));
+    const t0 = Date.now();
+    const res = await q.shutdown({ timeoutMs: 30, pending: 'keep' });
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect(res.remaining).toBe(1); // interrupted back to pending
+  });
+});
+
+describe('MailQueue — scheduling', () => {
+  it('retry backoff does not hold a concurrency slot (regression)', async () => {
+    const q = new MailQueue({ concurrency: 1, maxRetries: 1, retryDelay: 200, jitter: false });
+    const order: string[] = [];
+    q.setSendFn(async (o) => {
+      order.push(o.subject!);
+      if (o.subject === 'fails' && order.filter(s => s === 'fails').length === 1) {
+        return { ok: false, error: new SmtpConnError('temp'), attempts: 1 };
+      }
+      return okResult;
+    });
+    q.enqueue({ ...baseOptions, subject: 'fails' });
+    q.enqueue({ ...baseOptions, subject: 'ok' });
+    await new Promise(r => setTimeout(r, 50));
+    expect(order).toEqual(['fails', 'ok']); // 'ok' ran while 'fails' waited
+    expect(q.stats().scheduled).toBe(1);
+    await q.drain();
+    expect(order).toEqual(['fails', 'ok', 'fails']);
+  });
+
+  it('sendAt schedules a job for later', async () => {
+    const q = new MailQueue({ concurrency: 1 });
+    let sent = 0;
+    q.setSendFn(async () => { sent++; return okResult; });
+    const job = q.enqueue(baseOptions, { sendAt: new Date(Date.now() + 40) });
+    expect(job.status).toBe('scheduled');
+    await new Promise(r => setTimeout(r, 10));
+    expect(sent).toBe(0);
+    await q.drain();
+    expect(sent).toBe(1);
+  });
+
+  it('drain() rejects instead of hanging while paused', async () => {
+    const q = new MailQueue({ concurrency: 1 });
+    q.setSendFn(async () => okResult);
+    q.pause();
+    q.enqueue(baseOptions);
+    await expect(q.drain()).rejects.toThrow(/paused/);
+  });
+
+  it('jobs wait for a send function instead of being lost (regression)', async () => {
+    const q = new MailQueue({ concurrency: 1 });
+    const job = q.enqueue(baseOptions);
+    await new Promise(r => setTimeout(r, 5));
+    expect(job.status).toBe('pending');
+    q.setSendFn(async () => okResult);
+    await q.drain();
+    expect(job.status).toBe('success');
   });
 });

@@ -90,7 +90,7 @@ describe.skipIf(!HAS_SQLITE)('SqliteQueue (Node 22+)', () => {
       attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
       last_attempt_at TEXT NOT NULL DEFAULT '', errors TEXT NOT NULL DEFAULT '[]'
     )`);
-    db.prepare(`INSERT INTO queue_jobs VALUES (?,?,?,?,?,?,?)`).run(
+    db.prepare(`INSERT INTO queue_jobs (id, options, status, attempts, created_at, last_attempt_at, errors) VALUES (?,?,?,?,?,?,?)`).run(
       'restore-id',
       JSON.stringify(baseOpts),
       'pending',
@@ -109,7 +109,8 @@ describe.skipIf(!HAS_SQLITE)('SqliteQueue (Node 22+)', () => {
     q2.close();
 
     const stats = SqliteQueue.readStats(dbPath);
-    expect(stats.succeeded).toBeGreaterThanOrEqual(1);
+    expect(stats.succeeded).toBe(1);
+    expect(stats.pending).toBe(0);
   });
 
   it('requeueJob moves a dead job back to pending', async () => {
@@ -168,6 +169,91 @@ describe.skipIf(!HAS_SQLITE)('SqliteQueue (Node 22+)', () => {
     const q = new SqliteQueue(dbPath, {});
     q.close();
     const stats = SqliteQueue.readStats(dbPath);
-    expect(stats).toEqual({ pending: 0, running: 0, succeeded: 0, dead: 0 });
+    expect(stats).toEqual({ pending: 0, scheduled: 0, running: 0, succeeded: 0, dead: 0, cancelled: 0 });
+  });
+
+  it('delivers a job enqueued before a crash exactly once, under its original id (regression)', async () => {
+    const { spawnSync } = await import('child_process');
+    const { writeFileSync } = await import('fs');
+    const scriptPath = join(tmpdir(), `mailts-crash-${Date.now()}.ts`);
+    writeFileSync(scriptPath, `
+      import { SqliteQueue } from ${JSON.stringify(join(process.cwd(), 'src/queue/SqliteQueue.ts'))};
+      const q = new SqliteQueue(${JSON.stringify(dbPath)}, { concurrency: 1 });
+      q.pause();
+      const job = q.enqueue({ to: 'u@example.com', subject: 'S', text: 'T',
+        attachments: [{ filename: 'a.bin', content: Buffer.from([0, 1, 2, 255]) }],
+        date: new Date('2024-01-02T03:04:05Z') });
+      process.stdout.write(job.id + '\\n', () => process.kill(process.pid, 'SIGKILL'));
+    `);
+    const viteNode = join(process.cwd(), 'node_modules/.bin/vite-node');
+    const res = spawnSync(viteNode, [scriptPath], { encoding: 'utf8' });
+    rmSync(scriptPath);
+    const jobId = res.stdout.trim().split('\n').pop()!;
+    expect(jobId).toMatch(/^[0-9a-f]{16}$/);
+
+    const sent: Array<{ id?: string; content: Buffer; date: unknown }> = [];
+    const q = new SqliteQueue(dbPath, { concurrency: 2 }, undefined, async (opts) => {
+      sent.push({ content: opts.attachments![0]!.content as Buffer, date: opts.date });
+      return ok;
+    });
+    await q.drain();
+    await q.shutdown();
+
+    expect(sent).toHaveLength(1);
+    expect(Buffer.isBuffer(sent[0]!.content)).toBe(true);
+    expect([...sent[0]!.content]).toEqual([0, 1, 2, 255]);
+    expect(sent[0]!.date).toBeInstanceOf(Date);
+
+    const stats = SqliteQueue.readStats(dbPath);
+    expect(stats).toMatchObject({ succeeded: 1, pending: 0, running: 0 });
+
+    // A third start must not send it again
+    let again = 0;
+    const q3 = new SqliteQueue(dbPath, {}, undefined, async () => { again++; return ok; });
+    await q3.drain();
+    await q3.shutdown();
+    expect(again).toBe(0);
+  });
+
+  it('shutdown() keeps pending jobs for the next process instead of cancelling them (regression)', async () => {
+    const q1 = new SqliteQueue(dbPath, { concurrency: 1 });
+    q1.pause();
+    q1.enqueue(baseOpts);
+    q1.enqueue(baseOpts);
+    const res = await q1.shutdown();
+    expect(res).toEqual({ cancelled: 0, remaining: 2 });
+    expect(SqliteQueue.readStats(dbPath)).toMatchObject({ pending: 2, cancelled: 0 });
+
+    let sent = 0;
+    const q2 = new SqliteQueue(dbPath, { concurrency: 2 }, undefined, async () => { sent++; return ok; });
+    await q2.drain();
+    await q2.shutdown();
+    expect(sent).toBe(2);
+  });
+
+  it('two queues on one database never send the same job twice', async () => {
+    const seed = new SqliteQueue(dbPath, {});
+    seed.pause();
+    for (let i = 0; i < 20; i++) seed.enqueue({ ...baseOpts, subject: `m${i}` });
+    await seed.shutdown();
+
+    const seen: string[] = [];
+    const send = async (o: { subject?: string }) => { seen.push(o.subject!); await new Promise(r => setTimeout(r, 2)); return ok; };
+    const a = new SqliteQueue(dbPath, { concurrency: 3 }, undefined, send as never);
+    const b = new SqliteQueue(dbPath, { concurrency: 3 }, undefined, send as never);
+    await Promise.all([a.drain(), b.drain()]);
+    await Promise.all([a.shutdown(), b.shutdown()]);
+
+    expect(seen).toHaveLength(20);
+    expect(new Set(seen).size).toBe(20);
+  });
+
+  it('rejects stream attachments at enqueue time', async () => {
+    const { Readable } = await import('stream');
+    const q = new SqliteQueue(dbPath, {});
+    q.pause();
+    expect(() => q.enqueue({ ...baseOpts, attachments: [{ filename: 'x', content: Readable.from(['a']) }] }))
+      .toThrow(/stream/);
+    await q.shutdown();
   });
 });
