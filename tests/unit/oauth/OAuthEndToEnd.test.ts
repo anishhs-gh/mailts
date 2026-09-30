@@ -153,6 +153,46 @@ describe('OAuth → IMAP', () => {
   });
 });
 
+describe('secret hygiene', () => {
+  it('never writes access tokens, refresh tokens or passwords to protocol logs', async () => {
+    const ts = await tokenServer(() => ({ body: { access_token: 'SECRET-ACCESS-TOKEN', expires_in: 3600 } }));
+    cleanups.push(ts.close);
+    const imap = await imapServer();
+    const smtp = await smtpServer();
+    cleanups.push(imap.close, smtp.close);
+    const getToken = createTokenProvider({ provider: withTokenUrl(google, ts.url), clientId: 'c', clientSecret: 'CLIENT-SECRET', refreshToken: 'SECRET-REFRESH' });
+    const auth = { type: 'xoauth2' as const, user: 'me@x.com', getToken };
+    const mail = new MailTs({
+      logger: { level: 'debug', protocol: true },
+      imap: { host: '127.0.0.1', port: imap.port, secure: false, auth },
+      smtp: { host: '127.0.0.1', port: smtp.port, secure: false, pool: false, auth },
+    });
+    const lines: string[] = [];
+    mail.logger.onEvent(e => { lines.push(`${e.message} ${JSON.stringify(e.meta ?? {})}`); });
+
+    await mail.send({ from: 'me@x.com', to: 'a@x.com', text: 't' });
+    const session = mail.imap;
+    await session.open('INBOX');
+    await session.close();
+
+    const plainPw = new MailTs({
+      logger: { level: 'debug', protocol: true },
+      imap: { host: '127.0.0.1', port: imap.port, secure: false, auth: { type: 'plain', user: 'u', pass: 'HUNTER2-PASSWORD' } },
+    });
+    plainPw.logger.onEvent(e => { lines.push(e.message); });
+    const s2 = plainPw.imap;
+    await s2.open('INBOX');
+    await s2.close();
+
+    const all = lines.join('\n');
+    expect(all).toContain('AUTHENTICATE');          // protocol logging was really on
+    const xoauthPayload = Buffer.from('user=me@x.com\x01auth=Bearer SECRET-ACCESS-TOKEN\x01\x01').toString('base64');
+    for (const secret of ['SECRET-ACCESS-TOKEN', 'SECRET-REFRESH', 'CLIENT-SECRET', 'HUNTER2-PASSWORD', xoauthPayload]) {
+      expect(all).not.toContain(secret);
+    }
+  });
+});
+
 describe('OAuth client details', () => {
   it('builds Microsoft authorization URLs with tenant, scopes and account picker', () => {
     const url = new URL(buildAuthorizationUrl({
