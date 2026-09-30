@@ -1,6 +1,6 @@
 {
   "name": "@mailts/core",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Modern native TypeScript SMTP/IMAP library \u2014 zero legacy deps, built to replace nodemailer",
   "license": "MIT",
   "author": {
@@ -51,10 +51,12 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "MIGRATION.md",
+    "CHANGELOG.md"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.18.0"
   },
   "workspaces": [
     "packages/*"
@@ -69,7 +71,9 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit && npm run typecheck --workspaces --if-present",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build:core && npm run test:core"
+    "prepublishOnly": "npm run build:core && npm run test:core",
+    "test:integration": "MAILTS_IT=1 vitest run tests/integration",
+    "greenmail": "node scripts/greenmail.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

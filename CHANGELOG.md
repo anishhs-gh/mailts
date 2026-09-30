@@ -3,6 +3,66 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [0.5.0] — 2026-09-30
+
+Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) for behaviour changes. Tracking issue: #17.
+
+### Fixed — IMAP
+
+- **Message bodies were truncated.** The literal reader subtracted the prefix line from the literal size, so multi-line bodies (quoted replies, attachments) were cut short and the remainder parsed as bogus responses. Framing is now byte-exact and O(n).
+- **`fetch({ bodies: true })` marked mail as read** (it fetched `RFC822`). It now uses `BODY.PEEK[]`.
+- A `NIL` or quoted section returned **another section's bytes**; responses are now decoded from a structured tokenizer instead of regexes, which also fixes ENVELOPE literals, parentheses in names, and body text that looked like FETCH syntax.
+- `fetchText()` / `textOnly` returned quoted-printable/base64 text undecoded.
+- `LIST` truncated names containing spaces (`[Gmail]/Sent Mail`); modified UTF-7, literal names and NIL delimiters are now handled, and mailbox arguments are encoded.
+- A dropped connection left commands hanging until timeout; they now fail immediately with a retryable `ImapConnError`, and `ImapSession` reconnects on the next call.
+- IDLE: stop always waited 5 s, the completion was never awaited, commands could be written into an IDLE stream, and the untagged buffer grew without bound.
+- XOAUTH2 failures hung the connection (the error challenge was never answered).
+- BODYSTRUCTURE read the disposition from the wrong position for non-text parts; RFC 2231 filenames and `message/rfc822` sub-structures are supported.
+- `[UNSEEN n]` was reported as the unseen count (it is a sequence number — now `firstUnseen`).
+- `APPEND` sent an invalid date-time format; large UID sets exceeded server line limits (now compressed and chunked); `close()` issued `CLOSE`, silently expunging `\Deleted` mail.
+- User-supplied flags, sequence sets and sections are validated (no command injection); non-ASCII search terms are sent as literals with `CHARSET UTF-8`.
+
+### Fixed — Queue
+
+- **`shutdown()` cancelled pending mail.** It now takes `{ pending: 'drain' | 'keep' | 'cancel', timeoutMs }`, defaulting to delivering (in-memory) or keeping (persistent) mail, and never hangs.
+- **Persistent queue lost restored jobs** (restored before the send function existed) and **sent jobs twice** (re-enqueued under new ids). Jobs now keep their ids, wait for a send function, and are claimed with leases so several processes can share a database safely; a crashed local owner is detected immediately.
+- Buffers and Dates did not survive persistence (new versioned `JobCodec`; streams are rejected at enqueue).
+- Retry backoff held a concurrency slot; retries are now scheduled and free the slot.
+- `drain()` hung while paused; `shutdown(timeout)` could hang after aborting a job.
+- Queued sends bypassed `devMode` (real mail was sent in dev mode) and middleware.
+- `MailWorker` pulled the whole external queue into memory, spun on empty `dequeue()`, and crashed the process on an `ack`/`nack` rejection.
+- `configure()` leaked replaced pools and SQLite handles; documented queue defaults did not match the code.
+
+### Fixed — SMTP and MIME
+
+- Credentials could be sent in clear text when a server (or attacker) omitted STARTTLS — `requireTLS` now defaults on when authenticating (loopback hosts exempt).
+- Header injection through attachment filenames and content types; invalid header names are rejected instead of silently repaired.
+- Non-ASCII subjects and custom headers were sent as raw UTF-8 (now RFC 2047); non-ASCII filenames use RFC 2231.
+- One rejected recipient failed the whole send and `rejected` was always empty.
+- The pool handed broken connections (aborted, failed RSET) to the next caller and leaked abort listeners.
+- XOAUTH2 `334` error challenges poisoned the connection.
+- ical-only invites were rejected; `Attachment.encoding` was ignored; quoted-printable left trailing whitespace unprotected.
+- Envelope addresses with CR/LF or `<>` could inject SMTP commands.
+
+### Added
+
+- **`@mailts/core/oauth`** — Google and Microsoft: `authorizeWithLoopback()` (PKCE, CLI browser flow), `buildAuthorizationUrl()` / `exchangeCode()` (web), `refreshAccessToken()`, cached single-flight `googleTokenProvider()` / `microsoftTokenProvider()` with refresh-token rotation callbacks, `mailConfigFor()` presets.
+- `auth.getToken` for XOAUTH2 on SMTP and IMAP — called per connect, refreshed once on rejection.
+- `mail.build()`, exported `buildMessage()`, `session.appendMessage()`, `mail.saveToSent()`, `send(opts, { saveToSent })`.
+- `parseMessage()` MIME parser; `session.fetchRaw()`; `fetch({ headers })`; `envelope.references`; `findMailbox('\\Sent')`; `ImapListEntry.specialUse`.
+- `session.watch()` / `MailboxWatcher` — new mail by UID on a dedicated connection with reconnect and catch-up.
+- `ImapSession` lazy connect, `reconnect`, `keepAliveMs`, `isConnected`; `ImapClient.noop()`, `fetchAttributes()`.
+- `EmailOptions.inReplyTo` / `references`; `replyTo` accepts a list.
+- `attachmentPolicy: 'allow' | 'deny' | { root }`.
+- Queue: `enqueue(opts, { sendAt, id })`, `scheduled` state and stat, `get()`, `list()`, `maxRetryDelay`, `ShutdownResult`; `QueueDriver.release()` / `cancel()`; `MailWorker` `prefetch`, `idleDelayMs`, `use()`.
+- `SmtpClient.send()` returning accepted/rejected; `SMTPUTF8` and `BODY=8BITMIME` when required.
+- Errors: `ImapAuthError`, `ImapConnError`, `OAuthError`; `ImapError.responseCode`.
+
+### Changed
+
+- Node.js **20.18+** required (build target `node20`).
+- CI runs Node 20/22/24 and an integration suite against GreenMail (`npm run test:integration`).
+
 ## [0.4.0] — 2026-06-22
 
 ### Added

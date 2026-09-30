@@ -6,22 +6,25 @@ Modern TypeScript mail library — native SMTP/IMAP over Node.js built-ins, zero
 npm install @mailts/core
 ```
 
+Requires Node.js 20.18+ (SQLite queue persistence needs Node 22+). Upgrading from 0.4? See [MIGRATION.md](MIGRATION.md).
+
 ## Features
 
-- **Native SMTP** — STARTTLS upgrade, AUTH PLAIN / LOGIN / XOAUTH2, PIPELINING, connection pool
-- **Native IMAP** — automatic mailbox selection, full MIME parsing (multipart, inline attachments, forwarded messages, charset-aware), BODYSTRUCTURE selective fetch, search, MOVE/COPY/APPEND, CONDSTORE, IDLE push notifications
+- **Native SMTP** — STARTTLS (required before AUTH by default), AUTH PLAIN / LOGIN / XOAUTH2, PIPELINING, SMTPUTF8, partial-recipient reporting, connection pool
+- **Native IMAP** — byte-exact protocol parser, automatic mailbox selection and reconnection, full MIME parsing (multipart, inline attachments, forwarded messages, RFC 2231/2047, charset-aware), BODYSTRUCTURE selective fetch, search (incl. non-ASCII), MOVE/COPY/APPEND, CONDSTORE, `watch()` push by UID, special-use mailboxes, internationalised mailbox names
+- **OAuth 2.0** — Gmail / Google Workspace and Microsoft 365 / Outlook.com: browser sign-in (PKCE, loopback for CLIs), token refresh with rotation, `getToken` hook — `@mailts/core/oauth`
 - **HTTP transports** — Resend, SendGrid, Mailgun, Postmark, Amazon SES (all zero-dep via `node:http/https`)
 - **DKIM signing** — rsa-sha256, relaxed/relaxed canonicalization, configurable signed headers
 - **iCal invites** — attach calendar invites (`text/calendar`) with attendees, RSVP, timezone
 - **HTML to text** — auto-generated plain-text fallback from HTML body
-- **Queue + DLQ** — concurrency-limited send queue, exponential backoff + jitter, dead-letter queue, SQLite persistence for cross-process visibility (Node 22+)
+- **Queue + DLQ** — priority queue, scheduled sends, exponential backoff + jitter, dead-letter queue, shutdown that never drops mail, crash-safe SQLite persistence with multi-process leases (Node 22+), external queue drivers
 - **Health checks** — SMTP + IMAP probe with latency measurement; ready for K8s liveness/readiness endpoints
 - **Telemetry hooks** — zero-dependency observability; inject metrics/alerting callbacks for send, error, and queue events
 - **Streaming logs** — structured `LogEvent` stream, pluggable log sinks, full protocol trace (credentials auto-redacted)
 - **Aliases & templates** — define reusable email configs, plug in any template engine
 - **Middleware** — transform every outbound message in a pipeline
 - **Config file** — auto-loaded from `.mailtsrc` / `~/.mailts/config.json`, `${ENV_VAR}` expansion
-- **Security** — sealed `Credential` value object, header-injection prevention, attachment path traversal prevention, prototype-pollution-safe config parser
+- **Security** — sealed `Credential` value object, encoded/validated headers (no injection via subjects, names, filenames or content types), IMAP/SMTP command-injection guards, `requireTLS`, `attachmentPolicy` for untrusted input, prototype-pollution-safe config parser
 - **Zero runtime deps** — only `node:net`, `node:tls`, `node:crypto`, `node:stream`, `node:http`, `node:https`
 
 ---
@@ -268,9 +271,63 @@ const signed = signDkim(rawBuffer, {
 
 ---
 
+## OAuth (Google & Microsoft)
+
+Password login is disabled for most Microsoft 365 tenants and discouraged by Google. Use XOAUTH2 with a
+`getToken` provider — it is called on every (re)connect, and once more with `invalid: true` when the server
+rejects a token, so expired tokens are refreshed transparently.
+
+```ts
+import { MailTs } from '@mailts/core';
+import { google, microsoft, googleTokenProvider, mailConfigFor } from '@mailts/core/oauth';
+
+const getToken = googleTokenProvider({
+  clientId: process.env.GOOGLE_CLIENT_ID!,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+  refreshToken: await keychain.get('refresh-token'),
+});
+
+const mail = new MailTs(mailConfigFor(google, { user: 'me@gmail.com', getToken }));
+```
+
+**Signing in (CLI / desktop)** — opens the browser, receives the redirect on `127.0.0.1`, exchanges the code with PKCE:
+
+```ts
+import { authorizeWithLoopback, microsoft, microsoftTokenProvider } from '@mailts/core/oauth';
+
+const tokens = await authorizeWithLoopback({
+  provider: microsoft(),                       // tenant: 'common' | 'organizations' | 'consumers' | <id>
+  clientId: process.env.MS_CLIENT_ID!,
+  onAuthUrl: (url) => process.stderr.write(`Open ${url}\n`),   // also opens the browser by default
+});
+await keychain.set('refresh-token', tokens.refreshToken!);
+
+const getToken = microsoftTokenProvider({
+  clientId: process.env.MS_CLIENT_ID!,
+  refreshToken: tokens.refreshToken!,
+  onRefreshToken: (rt) => keychain.set('refresh-token', rt),   // Microsoft rotates refresh tokens
+});
+```
+
+**Web apps** use the same pieces with their own redirect: `createPkce()`, `createState()`,
+`buildAuthorizationUrl()`, then `exchangeCode()` in the callback. `refreshAccessToken()` throws
+`OAuthError` with `oauthCode: 'invalid_grant'` when the user has to sign in again.
+
+| Provider | IMAP | SMTP | Scopes |
+|---|---|---|---|
+| `google` | imap.gmail.com:993 | smtp.gmail.com:465 | `https://mail.google.com/` (restricted scope — needs Google verification for public apps) |
+| `microsoft()` | outlook.office365.com:993 | smtp.office365.com:587 (STARTTLS) | `IMAP.AccessAsUser.All`, `SMTP.Send`, `offline_access` |
+
+A static `auth: { type: 'xoauth2', user, token }` still works when you manage tokens yourself.
+
+---
+
 ## IMAP
 
-`ImapSession` automatically selects the correct mailbox before each operation. You never need to call `open()` first — just call what you need.
+`ImapSession` automatically selects the correct mailbox before each operation and connects lazily. When the
+connection drops, the next call reconnects, re-authenticates and re-selects (`reconnect: { retries, delayMs }`,
+or `false`); an operation in flight at the moment of the drop rejects with a retryable `ImapConnError` rather
+than being replayed. `mail.imap` returns a **new** session on every access — keep a reference and reuse it.
 
 ```ts
 const mail = new MailTs({
@@ -305,9 +362,12 @@ await session.close();
 | Mode | Option | What transfers | Use when |
 |---|---|---|---|
 | Headers only | _(default)_ | Envelope, flags, size | Inbox listing |
-| Full message | `bodies: true` | Complete RFC 822 message | Need body + attachments |
+| Full message | `bodies: true` | Complete RFC 822 message (`BODY.PEEK[]`) | Need body + attachments |
+| Extra headers | `headers: ['References']` | Named header fields | Threading without the body |
 | Text only | `textOnly: true` | BODYSTRUCTURE + text/html sections | Reading body, skipping attachments |
 | Structure only | `structure: true` | BODYSTRUCTURE metadata tree | Attachment listing without downloading |
+
+Fetching never marks messages as read — pass `markSeen: true` to set `\Seen`.
 
 ```ts
 // Full body — text, html, and attachment bytes
@@ -445,8 +505,25 @@ await session.expunge('INBOX');
 ### Append (save to Sent / Drafts)
 
 ```ts
-// Does not require a mailbox to be selected
+// Build from EmailOptions and upload — no selected mailbox needed
+await session.appendMessage('Drafts', { from, to, subject: 'Draft', text: '…' }, ['\\Draft']);
+
+// Raw bytes
 await session.append('Sent', rawMessageBuffer, ['\\Seen'], new Date());
+
+// Find special-use mailboxes (RFC 6154, with common-name fallback)
+const sent = await session.findMailbox('\\Sent');
+
+// Full raw source of a message (for forwarding or parseMessage())
+const raw = await session.fetchRaw(uid);
+```
+
+Many providers (unlike Gmail) do not store SMTP-sent mail. `send()` can do it for you, appending the exact bytes that were sent:
+
+```ts
+await mail.send(options, { saveToSent: true });      // SPECIAL-USE \Sent, or pass a mailbox name
+await mail.saveToSent(options, { mailbox: 'Sent' }); // standalone
+const built = await mail.build(options);             // raw RFC 5322 bytes without sending
 ```
 
 ### CONDSTORE — incremental sync
@@ -473,17 +550,23 @@ await session.subscribe('Newsletter');
 await session.unsubscribe('Newsletter');
 ```
 
-### IDLE push notifications
+### Watching for new mail
+
+`watch()` runs IDLE (or NOOP polling when IDLE is unsupported) on a **dedicated connection**, reports new
+messages by **UID**, reconnects automatically and catches up on anything missed while disconnected.
 
 ```ts
-await session.idle((msg) => {
-  console.log('New message, seq:', msg.seq);
-}, 'INBOX');
+const watcher = await session.watch('INBOX');
+watcher.on('new', async (uids) => {
+  const msgs = await session.fetch({ uids, textOnly: true });
+});
+watcher.on('expunge', (seq) => { /* removed */ });
+watcher.on('reset', () => { /* UIDVALIDITY changed — resync */ });
 
-setTimeout(() => session.stopIdle(), 30_000);
-
-await session.close();
+await watcher.stop();
 ```
+
+The older `session.idle(cb)` / `stopIdle()` still work and now deliver `{ uid }`.
 
 ---
 
@@ -537,10 +620,29 @@ mail.queue.interruptAll();
 mail.queue.abort(jobId);        // running job only
 mail.queue.abortAll();
 
-// Graceful shutdown
-await mail.queue.shutdown();            // pause + cancelAll + wait for running
-await mail.queue.shutdown(5_000);       // same, but abort stragglers after 5 s
+// Scheduled send
+mail.queue.enqueue(options, { sendAt: new Date(Date.now() + 3_600_000) });
+
+// Graceful shutdown — never discards mail unless asked
+await mail.shutdown();                                        // in-memory: deliver pending; persistent: keep for next start
+await mail.shutdown({ timeoutMs: 10_000 });                   // bound the wait; stragglers go back to pending
+await mail.queue.shutdown({ pending: 'cancel' });             // explicitly discard pending jobs
 ```
+
+Retries wait in a `scheduled` state and do not occupy a concurrency slot. `drain()` rejects (instead of
+hanging) when the queue is paused with work left. Queued sends honour `devMode` and run middleware on a
+fresh copy of the options for each attempt.
+
+### Persistence
+
+```ts
+const mail = new MailTs({ smtp, queue: { persist: true } }); // ~/.mailts/queue.db (Node 22+)
+```
+
+Jobs keep their ids across restarts, a job enqueued before a crash is delivered exactly once, and several
+processes can share one database file safely (each claims jobs with a lease). Attachments must be Buffers or
+file paths — streams cannot be persisted. The same `encodeJob` / `decodeJob` codec is exported for
+`QueueDriver` implementations.
 
 ### Queue events
 
@@ -555,7 +657,7 @@ mail.queue.on('interrupted', (job) => { ... });
 ### Stats
 
 ```ts
-const { pending, running, succeeded, dead, cancelled } = mail.queue.stats();
+const { pending, scheduled, running, succeeded, dead, cancelled } = mail.queue.stats();
 ```
 
 ---
@@ -751,6 +853,24 @@ const mail = new MailTs({
 
 ---
 
+## Security for untrusted input
+
+When messages are built from untrusted input (AI agents, web forms), lock down local file access and keep TLS mandatory:
+
+```ts
+const mail = new MailTs({
+  smtp,
+  attachmentPolicy: 'deny',          // or { root: '/srv/uploads' } — symlinks resolved, escapes rejected
+});
+// requireTLS defaults to true when authenticating (loopback hosts exempt); SMTP and IMAP
+// refuse to send credentials if STARTTLS is missing.
+```
+
+Header values, filenames, content types, IMAP flags, sequence sets and envelope addresses are encoded or
+validated — malformed input is rejected instead of being written to the wire.
+
+---
+
 ## Errors
 
 All errors extend `MailTsError` and carry `.code` and `.retryable`:
@@ -773,7 +893,11 @@ try {
 | `SmtpRejectError` | `EREJECT` | No |
 | `SmtpConnError` | `ECONN` | Yes |
 | `SmtpTimeoutError` | `ETIMEOUT` | Yes |
-| `ImapError` | `EIMAP` | — |
+| `ImapError` | `EIMAP` | varies |
+| `ImapAuthError` | `EAUTH` | No |
+| `ImapConnError` | `ECONN` | Yes |
+| `OAuthError` | `EAUTH` | varies (`invalid_grant` = sign in again) |
+| `QueueError` | `EQUEUE` | No |
 | `ConfigError` | `ECONFIG` | No |
 | `MimeError` | `EMIME` | No |
 | `TemplateError` | `ETEMPLATE` | No |

@@ -17,7 +17,7 @@ export default defineConfig([
     sourcemap: false,
     clean: true,
     treeshake: true,
-    target: 'node18',
+    target: 'node20',
     platform: 'node',
     outDir: 'dist',
     minify: true,
