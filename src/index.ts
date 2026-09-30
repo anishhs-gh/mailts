@@ -1,7 +1,7 @@
 // Main entry point — re-export everything public
 
 export { MailTs } from './core/MailTs.js';
-export type { MailTsConfig } from './core/MailTs.js';
+export type { MailTsConfig, SendCallOptions } from './core/MailTs.js';
 export { loadConfig, expandEnv } from './core/Config.js';
 
 // Types
@@ -41,6 +41,13 @@ export type {
   LogEvent,
   LogFormat,
   LoggerOptions,
+  MailAuth,
+  MailAuthType,
+  TokenProvider,
+  TokenContext,
+  ShutdownOptions,
+  ShutdownResult,
+  ShutdownPendingMode,
 } from './types/index.js';
 
 // Errors
@@ -53,7 +60,10 @@ export {
   SmtpTimeoutError,
   SmtpTlsError,
   ImapError,
+  ImapAuthError,
+  ImapConnError,
   QueueError,
+  OAuthError,
   ConfigError,
   MimeError,
   TemplateError,
@@ -65,6 +75,7 @@ export { Redactor } from './logger/Redactor.js';
 
 // SMTP
 export { SmtpClient } from './smtp/SmtpClient.js';
+export type { SmtpSendResult, SmtpSendOptions } from './smtp/SmtpClient.js';
 export { SmtpPool } from './smtp/SmtpPool.js';
 export { connectThroughProxy } from './smtp/SmtpProxy.js';
 
@@ -87,6 +98,11 @@ export type {
 } from './transports/index.js';
 
 // Core utilities
+export { buildMessage } from './core/Message.js';
+export type { BuiltMessage, BuildOptions } from './core/Message.js';
+export type { AttachmentPathPolicy } from './core/Attachment.js';
+export { parseMessage, parseAddressHeader } from './core/MimeParser.js';
+export type { ParsedMessage, MimePart } from './core/MimeParser.js';
 export { signDkim } from './core/Dkim.js';
 export { htmlToText } from './core/HtmlToText.js';
 export { buildICalString } from './core/ICal.js';
@@ -94,6 +110,8 @@ export { buildICalString } from './core/ICal.js';
 // IMAP
 export { ImapClient } from './imap/ImapClient.js';
 export { ImapSession } from './imap/ImapSession.js';
+export { MailboxWatcher } from './imap/MailboxWatcher.js';
+export type { WatchOptions } from './imap/MailboxWatcher.js';
 export { parseBodyStructure } from './imap/ImapBodyStructure.js';
 export type { BodyNode, BodyLeaf, BodyMultipart } from './imap/ImapBodyStructure.js';
 
@@ -105,6 +123,7 @@ export { SqliteQueue, resolveQueueDbPath } from './queue/SqliteQueue.js';
 export { JobController } from './queue/JobController.js';
 export type { ControlReason } from './queue/JobController.js';
 export { MailWorker } from './queue/MailWorker.js';
+export { encodeOptions, decodeOptions, encodeJob, decodeJob } from './queue/JobCodec.js';
 export type { MailWorkerConfig } from './queue/MailWorker.js';
 export type { QueueDriver, DriverMessage } from './queue/QueueDriver.js';
 
