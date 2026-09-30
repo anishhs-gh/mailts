@@ -15,7 +15,10 @@ export interface Attachment {
   path?: string;
   /** MIME type (auto-detected from filename if omitted). */
   contentType?: string;
-  /** Transfer encoding.  Defaults to `base64`. */
+  /**
+   * Transfer encoding. Defaults to `base64`. `7bit` / `8bit` are only accepted
+   * for text content that fits (no NUL, lines ≤ 998 bytes; 7bit: ASCII only).
+   */
   encoding?: 'base64' | 'quoted-printable' | '7bit' | '8bit';
   /** Content-ID for inline images referenced via `cid:` in HTML. */
   cid?: string;
@@ -47,8 +50,8 @@ export interface EmailOptions {
   bcc?: EmailAddress | EmailAddress[];
   /** Display name when `bcc` is a single bare string. */
   bccName?: string;
-  /** Reply-To address. */
-  replyTo?: EmailAddress;
+  /** Reply-To address(es). */
+  replyTo?: EmailAddress | EmailAddress[];
   /** Subject line.  CR/LF stripped to prevent header injection. */
   subject?: string;
   /** Plain-text body. */
@@ -63,6 +66,10 @@ export interface EmailOptions {
   priority?: 'high' | 'normal' | 'low';
   /** Override the generated Message-ID. */
   messageId?: string;
+  /** Message-ID this message replies to (sets `In-Reply-To`). Angle brackets optional. */
+  inReplyTo?: string;
+  /** Thread ancestry (sets `References`), oldest first. Angle brackets optional. */
+  references?: string | string[];
   /** Override the `Date` header.  Defaults to `new Date()`. */
   date?: Date;
   /**

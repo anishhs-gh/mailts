@@ -1,6 +1,7 @@
 import { createReadStream } from 'fs';
+import { realpath } from 'fs/promises';
 import { Transform, type TransformCallback } from 'stream';
-import { resolve, basename } from 'path';
+import { resolve, basename, sep } from 'path';
 import type { Attachment } from '../types/core.js';
 import { MimeError } from '../errors.js';
 
@@ -97,15 +98,41 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
   });
 }
 
-export async function resolveAttachment(att: Attachment): Promise<ResolvedAttachment> {
+/**
+ * Controls reading attachments from the local filesystem via `path`.
+ * - `'allow'` (default): any readable path, relative to `process.cwd()`
+ * - `'deny'`: `path` attachments are rejected — recommended for servers that
+ *   build messages from untrusted input (e.g. AI agents)
+ * - `{ root }`: only files inside `root` (symlinks resolved) are allowed
+ */
+export type AttachmentPathPolicy = 'allow' | 'deny' | { root: string };
+
+async function checkPath(path: string, policy: AttachmentPathPolicy): Promise<string> {
+  if (policy === 'deny') throw new MimeError('Attachment paths are disabled by attachmentPolicy');
+  if (policy === 'allow') return resolve(process.cwd(), path);
+  const root = await realpath(resolve(policy.root)).catch(() => {
+    throw new MimeError(`attachmentPolicy root does not exist: ${policy.root}`);
+  });
+  const real = await realpath(resolve(root, path)).catch(() => {
+    throw new MimeError(`Attachment not found: ${basename(path)}`);
+  });
+  if (real !== root && !real.startsWith(root + sep)) {
+    throw new MimeError(`Attachment path escapes the allowed root: ${basename(path)}`);
+  }
+  return real;
+}
+
+export async function resolveAttachment(
+  att: Attachment,
+  policy: AttachmentPathPolicy = 'allow',
+): Promise<ResolvedAttachment> {
   const filename = att.filename || (att.path ? basename(att.path) : 'file');
   const contentType = att.contentType ?? guessMime(filename);
   const disposition = att.disposition ?? (att.cid ? 'inline' : 'attachment');
   const encoding = att.encoding ?? 'base64';
 
   if (att.path !== undefined) {
-    // Validate path — prevent traversal by resolving against cwd
-    const safePath = resolve(process.cwd(), att.path);
+    const safePath = await checkPath(att.path, policy);
     return {
       filename,
       contentType,

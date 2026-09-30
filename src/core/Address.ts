@@ -1,5 +1,6 @@
 import type { EmailAddress } from '../types/core.js';
 import { ConfigError } from '../errors.js';
+import { encodeDisplayName } from './Headers.js';
 
 // RFC 5321 / 5322 — basic validation: local@domain where domain has at least one dot.
 const EMAIL_RE = /^[^\s@<>"(),;:\\[\]]+@[^\s@<>"(),;:\\[\]]+\.[^\s@<>"(),;:\\[\]]{2,}$/;
@@ -45,15 +46,7 @@ export function parseAddress(addr: EmailAddress): ParsedAddress {
 export function formatAddress(addr: EmailAddress): string {
   const { email, name } = parseAddress(addr);
   if (!name) return email;
-  // Encode non-ASCII display names with RFC 2047 UTF-8 Q-encoding
-  if (/[^\x20-\x7E]/.test(name)) {
-    return `=?UTF-8?Q?${encodeQWord(name)}?= <${email}>`;
-  }
-  // Quote display names that contain special characters
-  if (/[,;"<>()[\]]/.test(name)) {
-    return `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" <${email}>`;
-  }
-  return `${name} <${email}>`;
+  return `${encodeDisplayName(name)} <${email}>`;
 }
 
 /**
@@ -87,12 +80,6 @@ export function parseAddressList(
 /** Serialize a list of parsed addresses to a comma-separated RFC 5322 header value. */
 export function formatAddressList(addrs: ParsedAddress[]): string {
   return addrs.map(a => formatAddress(a.name ? { email: a.email, name: a.name } : a.email)).join(', ');
-}
-
-function encodeQWord(str: string): string {
-  return Buffer.from(str, 'utf8')
-    .toString('hex')
-    .replace(/../g, hex => `=${hex.toUpperCase()}`);
 }
 
 /** Extract all bare email strings from an address field (for RCPT TO). */
