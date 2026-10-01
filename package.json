@@ -74,7 +74,8 @@
     "prepublishOnly": "npm run build:core && npm run test:core",
     "test:integration": "MAILTS_IT=1 vitest run tests/integration",
     "greenmail": "node scripts/greenmail.mjs",
-    "typecheck:examples": "tsc -p tsconfig.examples.json"
+    "typecheck:examples": "tsc -p tsconfig.examples.json",
+    "example:oauth-web": "node --env-file=examples/.env node_modules/vite-node/vite-node.mjs examples/oauth-web-server.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

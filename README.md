@@ -309,8 +309,10 @@ const getToken = microsoftTokenProvider({
 });
 ```
 
-**Web apps** use the same pieces with their own redirect: `createPkce()`, `createState()`,
-`buildAuthorizationUrl()`, then `exchangeCode()` in the callback. `refreshAccessToken()` throws
+**Web apps / backends** use the same pieces with their own redirect: `createPkce()`, `createState()`,
+`buildAuthorizationUrl()`, then `exchangeCode()` in the callback; store the refresh token (encrypted) per user and
+build a `createTokenProvider()` when you need the mailbox. Use a Google "Web application" client (Microsoft: "Web"
+platform) and register the exact callback URI — see [`examples/oauth-web-server.ts`](examples/oauth-web-server.ts). `refreshAccessToken()` throws
 `OAuthError` with `oauthCode: 'invalid_grant'` when the user has to sign in again.
 
 | Provider | IMAP | SMTP | Scopes |
@@ -972,7 +974,7 @@ Runnable examples live in [`examples/`](examples) (run with `npx tsx examples/<f
 |---|---|
 | [`basic-send.ts`](examples/basic-send.ts) | Plain-text + HTML send |
 | [`oauth-cli.ts`](examples/oauth-cli.ts) | Google / Microsoft sign-in for CLIs, refresh-token storage, sign out |
-| [`oauth-web-server.ts`](examples/oauth-web-server.ts) | "Connect your mailbox" web flow for hosted apps |
+| [`oauth-web-server.ts`](examples/oauth-web-server.ts) | "Connect your mailbox" web flow for hosted apps — read inbox, send, disconnect (`cp examples/.env.example examples/.env`, then `npm run example:oauth-web`) |
 | [`oauth-test.mjs`](examples/oauth-test.mjs) | Interactive live test: sign in → read → send → log out (`node examples/oauth-test.mjs` after `npm run build`) |
 | [`xoauth2.ts`](examples/xoauth2.ts) | XOAUTH2 SMTP + IMAP with automatic token refresh |
 | [`imap-read.ts`](examples/imap-read.ts) | Unread mail, full bodies, `watch()` for new mail |
