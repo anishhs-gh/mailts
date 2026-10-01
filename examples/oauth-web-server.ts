@@ -13,9 +13,10 @@
  * Only providers with a client id configured are offered.
  *
  * Redirect URI = BASE_URL + /callback (default http://127.0.0.1:3000/callback).
- * - Google "Web application" client (what a backend uses): add the redirect URI under
- *   "Authorized redirect URIs" exactly — scheme, host, port and path must match, and
- *   127.0.0.1 ≠ localhost. Otherwise Google answers `Error 400: redirect_uri_mismatch`.
+ * - Google "Web application" client (what a backend uses): the redirect URI must be listed
+ *   under "Authorized redirect URIs". If it is missing, Google answers
+ *   `Error 400: redirect_uri_mismatch`. Matching is exact (scheme, host, port, path), so
+ *   register the same form you use in BASE_URL — e.g. http://127.0.0.1:3000/callback.
  * - Google "Desktop app" client: loopback redirects are accepted without registering (local only).
  * - Microsoft: "Web" platform redirect URI in the app registration, same exact-match rule.
  * - Deployed: register https://your.domain/callback and set BASE_URL=https://your.domain.
