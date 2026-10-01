@@ -373,3 +373,50 @@ describe('ImapSession against a mock server', () => {
     });
   });
 });
+
+describe('IMAP plan gaps', () => {
+  it('INBOX is case-insensitive, other mailbox names are not (I12)', async () => {
+    const selects: string[] = [];
+    await withServer({
+      handler: (line, tag, socket) => {
+        if (/ SELECT /.test(line)) { selects.push(line.split(' ').slice(2).join(' ')); socket.write(`* 1 EXISTS\r\n${tag} OK [READ-WRITE] done\r\n`); return true; }
+        if (/UID SEARCH/.test(line)) { socket.write(`* SEARCH\r\n${tag} OK\r\n`); return true; }
+        return false;
+      },
+    }, async (cfg) => {
+      const s = new ImapSession(cfg);
+      await s.search({}, 'INBOX');
+      await s.search({}, 'inbox');   // same mailbox — no reselect
+      await s.search({}, 'Work');
+      await s.search({}, 'work');    // different mailbox — reselect
+      expect(selects).toEqual(['"INBOX"', '"Work"', '"work"']);
+      await s.close();
+    });
+  });
+
+  it('frames a 8 MB literal in 16 KB chunks quickly (I13: no O(n²) buffering)', () => {
+    const body = Buffer.alloc(8 * 1024 * 1024, 0x61);
+    const wire = Buffer.concat([Buffer.from(`* 1 FETCH (UID 1 BODY[] {${body.length}}\r\n`), body, Buffer.from(')\r\n')]);
+    const p = new ImapParser();
+    const t0 = performance.now();
+    const out = [];
+    for (let i = 0; i < wire.length; i += 16 * 1024) out.push(...p.feed(wire.subarray(i, i + 16 * 1024)));
+    const ms = performance.now() - t0;
+    expect(out).toHaveLength(1);
+    expect(parseSectionResponse(out[0]!.data, '')!.length).toBe(body.length);
+    expect(ms).toBeLessThan(2_000); // quadratic re-concatenation took tens of seconds at this size
+  });
+
+  it('a command with no server activity times out and closes the connection (I7)', async () => {
+    await withServer({
+      handler: (line) => / NOOP$/.test(line), // swallow NOOP: never answer
+    }, async (cfg) => {
+      const c = new ImapClient({ ...cfg, socketTimeout: 100 });
+      await c.connect();
+      const t0 = Date.now();
+      await expect(c.noop()).rejects.toThrow(/timeout: NOOP/);
+      expect(Date.now() - t0).toBeLessThan(1_000);
+      expect(c.isConnected).toBe(false);
+    });
+  });
+});
