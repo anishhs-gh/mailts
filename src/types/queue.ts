@@ -12,7 +12,13 @@ export interface EnqueueOptions {
   priority?: JobPriority;
   /** Do not send before this time (scheduled send). */
   sendAt?: Date;
-  /** Use this job id (e.g. an external queue message id). Must be unique. */
+  /**
+   * Use this job id (e.g. an external message id). Must be unique: in-memory
+   * queues reject ids of active jobs; `SqliteQueue` rejects any id already in
+   * the database (sent, dead and cancelled included) so mail is never re-sent.
+   * Throws `QueueError` on a duplicate. For "send at most once per key"
+   * semantics without errors, use `idempotencyKey`.
+   */
   id?: string;
 }
 

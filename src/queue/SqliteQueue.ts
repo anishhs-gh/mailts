@@ -6,6 +6,7 @@ import { randomBytes } from 'crypto';
 import { MailQueue, type SendFn } from './MailQueue.js';
 import { encodeOptions, decodeOptions, encodeErrors, decodeErrors } from './JobCodec.js';
 import type { QueueOptions, QueueJob, QueueStats, JobPriority, ShutdownOptions, ShutdownResult } from '../types/queue.js';
+import { QueueError } from '../errors.js';
 import type { Logger } from '../logger/Logger.js';
 
 // node:sqlite types — may not exist on Node < 22, typed as any
@@ -143,15 +144,27 @@ export class SqliteQueue extends MailQueue {
 
   // ── Persistence ──────────────────────────────────────────────────────────
 
-  private upsert(job: QueueJob, owned = true): void {
+  /**
+   * Insert a newly enqueued job. Job ids are unique for the lifetime of the
+   * database: reusing the id of any existing row (pending, sent, dead or
+   * cancelled) throws instead of overwriting it — which would re-send mail.
+   */
+  private insert(job: QueueJob): void {
+    const exists = this.db.prepare(`SELECT status FROM queue_jobs WHERE id=?`).get(job.id) as { status: string } | undefined;
+    if (exists) throw new QueueError(`Duplicate job id: ${job.id} (already ${exists.status})`);
+    try {
+      this.insertRow(job);
+    } catch (err) {
+      if (/UNIQUE/i.test((err as Error).message)) throw new QueueError(`Duplicate job id: ${job.id}`);
+      throw err;
+    }
+  }
+
+  private insertRow(job: QueueJob): void {
     this.db.prepare(`
       INSERT INTO queue_jobs (id, options, status, priority, attempts, created_at, last_attempt_at, errors,
                               cancelled_at, not_before, owner, lease_until)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        status=excluded.status, attempts=excluded.attempts, last_attempt_at=excluded.last_attempt_at,
-        errors=excluded.errors, cancelled_at=excluded.cancelled_at, not_before=excluded.not_before,
-        owner=excluded.owner, lease_until=excluded.lease_until
     `).run(
       job.id,
       encodeOptions(job.options),
@@ -163,8 +176,8 @@ export class SqliteQueue extends MailQueue {
       JSON.stringify(encodeErrors(job.errors)),
       job.cancelledAt?.toISOString() ?? null,
       job.notBefore?.toISOString() ?? null,
-      owned ? this.owner : null,
-      owned ? Date.now() + LEASE_MS : null,
+      this.owner,
+      Date.now() + LEASE_MS,
     );
   }
 
@@ -189,7 +202,7 @@ export class SqliteQueue extends MailQueue {
 
   private wireEvents(): void {
     const update = (job: QueueJob) => { if (!this.isClosed) this.updateStatus(job); };
-    this.on('enqueued', (job: QueueJob) => this.upsert(job));
+    this.on('enqueued', (job: QueueJob) => this.insert(job));
     for (const ev of ['scheduled', 'promoted', 'started', 'success', 'retry', 'dead', 'cancelled', 'interrupted']) {
       this.on(ev, update);
     }

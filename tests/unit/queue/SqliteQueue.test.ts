@@ -319,4 +319,29 @@ describe.skipIf(!HAS_SQLITE)('SqliteQueue (Node 22+)', () => {
     expect(job!.notBefore!.getTime()).toBeGreaterThan(Date.now() + 50_000);
     await q2.shutdown({ pending: 'keep' });
   });
+
+  it('never re-sends when a job id is reused after the job finished (regression)', async () => {
+    let sent = 0;
+    const send = async () => { sent++; return ok; };
+    const q1 = new SqliteQueue(dbPath, {}, undefined, send);
+    q1.enqueue(baseOpts, { id: 'order-123-receipt' });
+    await q1.drain();
+    await q1.shutdown();
+
+    const q2 = new SqliteQueue(dbPath, {}, undefined, send);
+    expect(() => q2.enqueue(baseOpts, { id: 'order-123-receipt' })).toThrow(/Duplicate job id: order-123-receipt \(already success\)/);
+    await q2.drain();
+    await q2.shutdown();
+    expect(sent).toBe(1);
+    expect(SqliteQueue.readStats(dbPath)).toMatchObject({ succeeded: 1, pending: 0 });
+  });
+
+  it('rejects reuse of dead and cancelled ids too', async () => {
+    const q = new SqliteQueue(dbPath, {});
+    q.pause();
+    const a = q.enqueue(baseOpts, { id: 'c1' });
+    q.cancel(a.id);
+    expect(() => q.enqueue(baseOpts, { id: 'c1' })).toThrow(/already cancelled/);
+    await q.shutdown();
+  });
 });
