@@ -54,8 +54,9 @@ mailts/                        ← root package (npm: @mailts/core)
 
 | Tool | Minimum | Notes |
 |---|---|---|
-| Node.js | 18.x | 20.x recommended |
-| npm | 9.x | ships with Node 18+ |
+| Node.js | 20.18 | 22.x recommended (`node:sqlite` for `SqliteQueue` needs 22.13+) |
+| npm | 10.x | ships with Node 20+ |
+| Java | 21 | only for `npm run test:integration` (GreenMail) |
 | Git | 2.x | — |
 
 No global installs required beyond Node/npm.
@@ -320,10 +321,12 @@ packages/cli/package.json  →  "version": "X.Y.Z"
 ### Pre-push final gate
 
 ```bash
-npm run typecheck && npm test && npm run build
+npm run typecheck && npm run typecheck:examples && npm test && npm run build
+# Touched IMAP/SMTP/MIME? Also (needs Java 21):
+npm run test:integration
 ```
 
-All three must be green. Do not push if any fails.
+All must be green. Do not push if any fails.
 
 ---
 
@@ -377,7 +380,7 @@ Breaking changes must include `BREAKING CHANGE:` in the commit body.
 1. **One concern per PR.** A feature PR should not also refactor unrelated code.
 2. Target `main`. No direct pushes to `main` — all changes go through PRs.
 3. Every PR must:
-   - Pass CI (typecheck + lint + test + build across Node 18 and 20)
+   - Pass CI: typecheck (incl. examples) + lint + test + build on Node 20, 22 and 24, the GreenMail integration suite, and an `npm publish --dry-run` per package (same-repo PRs only — fork PRs have no `NPM_TOKEN`)
    - Have a description explaining *why* the change is needed
    - Reference any related issue with `Closes #<n>`
 4. For breaking changes: bump the major version in `package.json` and document migration steps in the PR description.
@@ -414,7 +417,8 @@ Publishing is **always triggered by a Git tag**, never by a CI commit. There is 
 
 1. Add `NPM_TOKEN` to repository secrets (Settings → Secrets → Actions).  
    The token must have `Automation` scope and publish access to the `@mailts` npm org.
-2. Ensure the repository has **Actions permissions** to create releases (`Settings → Actions → Workflow permissions → Read and write`).
+2. *(Optional — AI release notes)* Add `BEDROCK_API_KEY` to repository secrets, and optionally the repository **variables** `AWS_REGION` (default `us-east-1`) and `LEDGER_MODEL` (overrides `model` in `ledger.config.yaml`). Without the key, releases fall back to GitHub's auto-generated notes.
+3. Ensure the repository has **Actions permissions** to create releases (`Settings → Actions → Workflow permissions → Read and write`).
 
 ### Release workflow per package
 
@@ -455,8 +459,12 @@ This triggers `release.yml`. The workflow will:
 1. `npm ci` — install full workspace
 2. Typecheck → Test → Build the package
 3. Verify the tag version matches `package.json` version (fails if mismatched)
-4. Create a GitHub Release with auto-generated notes
-5. `npm publish --provenance --access public` — signed with OIDC
+4. **Dry run** (`.github/actions/npm-dry-run`) — `NPM_TOKEN` is valid, the account has read-write access to the package, `npm publish --dry-run` passes, `npm pack --dry-run` lists the tarball. Fails *before* any GitHub Release exists.
+5. **Release notes** (`.github/actions/release-notes`) — [ledger](https://github.com/anishhs-gh/ledger) summarises commits from the previous tag **of the same package** to this tag (via Bedrock). Missing key, first release, or any ledger failure → GitHub's auto-generated notes; a release is never blocked on notes.
+6. Create a GitHub Release with those notes
+7. `npm publish --provenance --access public` — signed with OIDC
+
+> ledger has no path filter, so notes for one package may mention commits that touched other packages in the same range. Edit the release body on GitHub if needed.
 
 **Step 3 — verify the publish**
 

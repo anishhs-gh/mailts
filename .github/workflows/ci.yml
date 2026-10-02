@@ -73,3 +73,18 @@ jobs:
 
       - name: Integration tests
         run: npm run test:integration
+
+  # Publishability check per package. Skipped for PRs from forks (no secrets there).
+  dry-run:
+    name: Dry-run publish
+    needs: test
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ['.', packages/trap, packages/cli, packages/testing]
+    uses: ./.github/workflows/dryrun.yml
+    with:
+      workspace: ${{ matrix.workspace }}
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

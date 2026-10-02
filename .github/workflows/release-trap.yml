@@ -65,12 +65,32 @@ jobs:
             echo "value=@mailts/trap@${VERSION}" >> $GITHUB_OUTPUT
           fi
 
+      # Prove the publish would succeed BEFORE a GitHub Release is created
+      - name: Verify publish (dry run)
+        uses: ./.github/actions/npm-dry-run
+        with:
+          working-directory: packages/trap
+          npm-token: ${{ secrets.NPM_TOKEN }}
+
+      # AI release notes via ledger (Bedrock); falls back to GitHub's auto notes
+      - name: Generate release notes (ledger)
+        id: notes
+        if: github.event_name == 'push'
+        uses: ./.github/actions/release-notes
+        with:
+          package: '@mailts/trap'
+          tag: ${{ steps.release_tag.outputs.value }}
+          bedrock-api-key: ${{ secrets.BEDROCK_API_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+          model: ${{ vars.LEDGER_MODEL }}
+
       - name: Create GitHub Release
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_tag.outputs.value }}
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.generated == 'true' && steps.notes.outputs.notes-file || '' }}
+          generate_release_notes: ${{ steps.notes.outputs.generated != 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

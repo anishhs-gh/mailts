@@ -1,0 +1,12 @@
+# ledger — AI release notes (https://github.com/anishhs-gh/ledger)
+#
+# Used by the release workflows (.github/actions/release-notes) and locally:
+#   npx @anishhs/ledger generate --from @mailts/core@0.4.0 --to HEAD --dry-run
+# The API key is never stored here: CI reads the BEDROCK_API_KEY secret.
+
+provider: bedrock
+model: openai.gpt-oss-20b-1:0
+
+# audience: engineering   # engineering | business | qa
+# maxDiffLines: 100       # cap per-file diff lines sent to the model
+# maxTokens: 4096
