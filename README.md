@@ -13,7 +13,10 @@ Requires Node.js 20.18+ (SQLite queue persistence needs Node 22+). Upgrading fro
 - **Native SMTP** — STARTTLS (required before AUTH by default), AUTH PLAIN / LOGIN / XOAUTH2, PIPELINING, SMTPUTF8, partial-recipient reporting, connection pool
 - **Native IMAP** — byte-exact protocol parser, automatic mailbox selection and reconnection, full MIME parsing (multipart, inline attachments, forwarded messages, RFC 2231/2047, charset-aware), BODYSTRUCTURE selective fetch, search (incl. non-ASCII), MOVE/COPY/APPEND, CONDSTORE, `watch()` push by UID, special-use mailboxes, internationalised mailbox names
 - **OAuth 2.0** — Gmail / Google Workspace and Microsoft 365 / Outlook.com: browser sign-in (PKCE, loopback for CLIs), token refresh with rotation, `getToken` hook — `@mailts/core/oauth`
-- **HTTP transports** — Resend, SendGrid, Mailgun, Postmark, Amazon SES (all zero-dep via `node:http/https`)
+- **HTTP transports** — Resend, SendGrid, Mailgun, Postmark, Amazon SES, **Microsoft Graph**, **Gmail API** (all zero-dep), with retryable rate-limit/outage errors
+- **One mailbox API for IMAP, Microsoft Graph and the Gmail API** — read, search, flag, move, draft and watch with the same code
+- **Reply / forward builders** — threading, reply-all, quoting, forward inline or as attachment
+- **Bulk-sender ready** — List-Unsubscribe + one-click (RFC 8058), queue rate limits, idempotency keys
 - **DKIM signing** — rsa-sha256, relaxed/relaxed canonicalization, configurable signed headers
 - **iCal invites** — attach calendar invites (`text/calendar`) with attendees, RSVP, timezone
 - **HTML to text** — auto-generated plain-text fallback from HTML body
@@ -212,6 +215,37 @@ if (result.ok) {
 }
 ```
 
+### Replying and forwarding
+
+`buildReply()` / `buildForward()` turn a fetched (or parsed) message into ready-to-send `EmailOptions`:
+`Re:`/`Fwd:` subjects (localized prefixes stripped), reply / reply-all recipients (honours `Reply-To`, drops your
+own addresses), `In-Reply-To` + `References` so it stays in the thread, and quoting.
+
+```ts
+import { buildReply, buildForward } from '@mailts/core';
+
+const [orig] = await session.fetch({ uids: [uid], bodies: true, headers: ['References'] });
+await mail.send(buildReply(orig, { from: 'me@x.com', text: 'Thanks!', replyAll: true }), { saveToSent: true });
+
+// Forward inline (original attachments and inline images carried over)…
+await mail.send(buildForward(orig, { from: 'me@x.com', to: 'boss@x.com', text: 'FYI' }));
+// …or attach the untouched original
+await mail.send(buildForward(orig, { from: 'me@x.com', to: 'boss@x.com', mode: 'attachment', raw: await session.fetchRaw(uid) }));
+```
+
+### Unsubscribe headers (bulk senders)
+
+Gmail and Yahoo require one-click unsubscribe from bulk senders. `unsubscribe` adds `List-Unsubscribe` and
+`List-Unsubscribe-Post`; both are DKIM-signed by default (required for one-click to be honoured).
+
+```ts
+await mail.send({ ...newsletter, unsubscribe: { url: `https://app.com/u/${token}`, mailto: 'unsubscribe@app.com' } });
+
+// In your endpoint (providers POST "List-Unsubscribe=One-Click"):
+import { isOneClickUnsubscribe } from '@mailts/core';
+if (isOneClickUnsubscribe({ method: req.method, contentType: req.headers['content-type'], body })) { /* unsubscribe */ }
+```
+
 ---
 
 ## HTTP transports
@@ -235,8 +269,26 @@ Available transports:
 | Mailgun | `MailgunTransport` |
 | Postmark | `PostmarkTransport` |
 | Amazon SES (HTTP) | `SesTransport` |
+| Microsoft Graph | `GraphTransport` |
+| Gmail API | `GmailTransport` |
 
 All transports implement the same `Transport` interface, so you can swap them without changing your send code.
+Provider errors are `TransportError`s: 408/429/5xx are retryable (the queue waits for `Retry-After`), 401/403 are
+`EAUTH`, other 4xx `EREJECT`. JSON-API transports forward threading and unsubscribe headers.
+
+**Graph and Gmail API** send the MIME mailts built (attachments, threading, DKIM-independent headers intact) using
+an OAuth `getToken` provider — useful when a Microsoft 365 tenant disables SMTP AUTH, or for Gmail's higher quotas:
+
+```ts
+import { GraphTransport, GmailTransport } from '@mailts/core';
+import { microsoft, microsoftTokenProvider } from '@mailts/core/oauth';
+
+const getToken = microsoftTokenProvider({ provider: microsoft({ api: 'graph-send' }), clientId, refreshToken });
+const mail = new MailTs({ transport: new GraphTransport({ user: 'me@contoso.com', getToken }) });
+// Gmail: new GmailTransport({ user: 'me@gmail.com', getToken }) with a Gmail API scope
+```
+
+`GraphTransport` and `GraphMailbox` are **experimental** (tested against a mock Graph API, not yet a live tenant).
 
 ---
 
@@ -321,6 +373,28 @@ platform) and register the exact callback URI — see [`examples/oauth-web-serve
 | `microsoft()` | outlook.office365.com:993 | smtp.office365.com:587 (STARTTLS) | `IMAP.AccessAsUser.All`, `SMTP.Send`, `offline_access` |
 
 A static `auth: { type: 'xoauth2', user, token }` still works when you manage tokens yourself.
+
+**Scopes per API:** one Microsoft token serves one API — use `microsoft()` for IMAP/SMTP and
+`microsoft({ api: 'graph' })` for Graph. `SCOPES` and `googleWith(SCOPES.google.send)` cover narrower Google scopes.
+
+**Organisation-wide (app-only) access** — an admin authorises the app once and your backend uses any mailbox,
+no user sign-in:
+
+```ts
+import { googleServiceAccountProvider, microsoftAppOnlyProvider } from '@mailts/core/oauth';
+
+// Google Workspace: service account with domain-wide delegation
+const google = googleServiceAccountProvider({ credentials: serviceAccountJson, subject: 'support@company.com' });
+
+// Microsoft 365: client credentials (secret or certificate); api: 'graph' for Graph
+const ms = microsoftAppOnlyProvider({ tenant: 'contoso.com', clientId, certificate: { privateKey, thumbprint } });
+
+new MailTs({ imap: { host: 'outlook.office365.com', port: 993, secure: true,
+                     auth: { type: 'xoauth2', user: 'support@contoso.com', getToken: ms } } });
+```
+
+Admin setup steps are in the TSDoc of each function. The Microsoft app-only path is **experimental** (not yet
+verified on a live tenant).
 
 ---
 
@@ -572,6 +646,37 @@ The older `session.idle(cb)` / `stopIdle()` still work and now deliver `{ uid }`
 
 ---
 
+## One mailbox API: IMAP, Microsoft Graph, Gmail API
+
+`Mailbox` is a provider-neutral interface — write mail-handling code once and run it against any provider:
+
+```ts
+import { imapMailbox, GraphMailbox, GmailMailbox, type Mailbox } from '@mailts/core';
+
+const boxes: Mailbox[] = [
+  imapMailbox(mail.imap),                                        // any IMAP server
+  new GraphMailbox({ user: 'me@contoso.com', getToken: msGraph }), // Microsoft 365 via Graph (experimental)
+  new GmailMailbox({ user: 'me@gmail.com', getToken: gmailApi }),  // Gmail via the Gmail API
+];
+
+for (const box of boxes) {
+  const unread = await box.fetch({ search: { seen: false, from: 'boss@x.com' }, limit: 10 });
+  const [first] = await box.fetch({ ids: [unread[0].id], bodies: true });   // text, html, attachments
+  await box.setSeen([first.id], true);
+  await box.move([first.id], 'Archive');
+  await box.append('Drafts', (await mail.build(reply)).raw, { draft: true });
+  const watcher = await box.watch('INBOX');
+  watcher.on('new', (ids) => { /* … */ });
+}
+```
+
+Ids are strings (IMAP UID, Graph id, Gmail id); flags use IMAP names (`\Seen`, `\Flagged`, `\Draft`); folder
+names like `INBOX`, `Sent`, `Drafts`, `Trash` resolve per provider (Gmail mailboxes are labels).
+Provider limits: Graph `append()` creates drafts only; Graph and Gmail `watch()` poll (Graph receive time, Gmail
+history) — push needs a public webhook / Pub/Sub topic.
+
+---
+
 ## Queue
 
 Use `mail.queue` for fire-and-forget sending with automatic retries, priority scheduling, and full lifecycle control.
@@ -629,6 +734,16 @@ mail.queue.enqueue(options, { sendAt: new Date(Date.now() + 3_600_000) });
 await mail.shutdown();                                        // in-memory: deliver pending; persistent: keep for next start
 await mail.shutdown({ timeoutMs: 10_000 });                   // bound the wait; stragglers go back to pending
 await mail.queue.shutdown({ pending: 'cancel' });             // explicitly discard pending jobs
+```
+
+**Never send twice:** `enqueue(options, { idempotencyKey: 'order-42-receipt' })` returns the existing job for a
+repeated key (within `idempotencyWindowMs`, default 7 days — persisted by the SQLite queue), and every queued job
+gets a fixed Message-ID so a resend after a crash carries the same id.
+
+**Rate limits** keep you under provider caps (over-limit jobs wait without holding a slot):
+
+```ts
+new MailTs({ smtp, queue: { rateLimit: { perMinute: 30, perDay: 10_000, by: 'sender', countRecipients: true } } });
 ```
 
 Retries wait in a `scheduled` state and do not occupy a concurrency slot. `drain()` rejects (instead of
@@ -873,6 +988,11 @@ const mail = new MailTs({
 Header values, filenames, content types, IMAP flags, sequence sets and all addresses (From/To/Cc/Bcc/Reply-To)
 are encoded or validated — malformed input is rejected with `MimeError` instead of being written to the wire.
 
+**Hostile servers and messages:** IMAP responses are size-limited while they arrive (`imap.limits`: 64 MiB per
+literal, 128 MiB per response, 1 MiB per line — exceeding one fails the command with `LimitError` and closes the
+connection); `parseMessage(raw, { maxParts, maxHeaderBytes, maxDepth })` truncates (`truncated: true`) instead of
+exhausting memory; SMTP replies are capped. TLS defaults to `minVersion: 'TLSv1.2'` (override via `tls`).
+
 ---
 
 ## Errors
@@ -902,6 +1022,8 @@ try {
 | `ImapConnError` | `ECONN` | Yes |
 | `OAuthError` | `EAUTH` | varies (`invalid_grant` = sign in again) |
 | `QueueError` | `EQUEUE` | No |
+| `TransportError` | `EAUTH` / `EREJECT` / `ECONN` | 408/429/5xx and network: yes (`retryAfterMs`) |
+| `LimitError` | `ELIMIT` | No |
 | `ConfigError` | `ECONFIG` | No |
 | `MimeError` | `EMIME` | No |
 | `TemplateError` | `ETEMPLATE` | No |
@@ -975,8 +1097,11 @@ Runnable examples live in [`examples/`](examples) (run with `npx tsx examples/<f
 | [`basic-send.ts`](examples/basic-send.ts) | Plain-text + HTML send |
 | [`oauth-cli.ts`](examples/oauth-cli.ts) | Google / Microsoft sign-in for CLIs, refresh-token storage, sign out |
 | [`oauth-web-server.ts`](examples/oauth-web-server.ts) | "Connect your mailbox" web flow for hosted apps — read inbox, send, disconnect (`cp examples/.env.example examples/.env`, then `npm run example:oauth-web`) |
-| [`oauth-test.mjs`](examples/oauth-test.mjs) | Interactive live test: sign in → read → send → log out (`node examples/oauth-test.mjs` after `npm run build`) |
+| [`oauth-test.mjs`](examples/oauth-test.mjs) | Interactive live test: sign in → read → send → log out, over IMAP/SMTP or the Gmail API (`node examples/oauth-test.mjs` after `npm run build`) |
 | [`xoauth2.ts`](examples/xoauth2.ts) | XOAUTH2 SMTP + IMAP with automatic token refresh |
+| [`oauth-app-only.ts`](examples/oauth-app-only.ts) | Organisation-wide access: Google service account / Microsoft client credentials |
+| [`mailbox-any-provider.ts`](examples/mailbox-any-provider.ts) | One `Mailbox` code path for IMAP, Microsoft Graph and the Gmail API |
+| [`newsletter-unsubscribe.ts`](examples/newsletter-unsubscribe.ts) | One-click unsubscribe, rate limits and idempotency for bulk sends |
 | [`imap-read.ts`](examples/imap-read.ts) | Unread mail, full bodies, `watch()` for new mail |
 | [`imap-manage.ts`](examples/imap-manage.ts) | Flags, move, delete, drafts, CONDSTORE, mailbox management |
 | [`reply-and-save-to-sent.ts`](examples/reply-and-save-to-sent.ts) | Threaded replies, save to Sent, drafts |

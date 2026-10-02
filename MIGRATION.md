@@ -28,6 +28,11 @@ behaviour changes to check. Tracking issue: [#17](https://github.com/anishhs-gh/
 | Addresses | Malformed addresses reached the transport | From/To/Cc/Bcc/Reply-To must look like `local@domain` (no spaces, brackets, quotes) — otherwise `send()` returns a `MimeError` | Validate or clean addresses before sending |
 | `path` attachments with no `attachmentPolicy` | Read silently | Still read, plus a one-time `MailtsWarning` on stderr | Set `attachmentPolicy` explicitly (`'allow'` keeps today's behaviour) |
 | `QueueStats` | — | New `scheduled` field; `QueueJob.status` may be `'scheduled'` | Update exhaustive switches |
+| HTTP transport failures | Plain `Error`, never retried | `TransportError` with `status`, `provider`, `retryAfterMs`; 429/5xx retried by the queue | Catch `TransportError` instead of matching message text |
+| `enqueue(…, { id })` on `SqliteQueue` | Reusing an id re-sent the job | Throws `QueueError` for any id already in the database | Use `idempotencyKey` for "at most once per key" |
+| Queued `options.messageId` | Generated at send time (new per attempt) | Generated at enqueue and stored on the job | Read `job.options.messageId` if you track ids |
+| TLS | Node default minimum | `minVersion: 'TLSv1.2'` | Set `tls: { minVersion: 'TLSv1' }` only for legacy servers |
+| DKIM default signed headers | from…cc | Also In-Reply-To, References, List-Unsubscribe, List-Unsubscribe-Post (when present) | — |
 
 ## Persistent queue databases
 
@@ -36,6 +41,9 @@ WAL mode). Rows written by 0.4 are restored under their original ids and deliver
 stored Buffer attachments as `{ type: 'Buffer', data: [...] }` are decoded back to Buffers.
 
 ## New APIs worth adopting
+
+- `Mailbox` (IMAP / Microsoft Graph / Gmail API), `GraphTransport`, `GmailTransport`, app-only OAuth providers.
+- `buildReply` / `buildForward`, `unsubscribe`, queue `idempotencyKey` and `rateLimit`, `imap.limits`.
 
 - OAuth: `auth: { type: 'xoauth2', user, getToken }` and `@mailts/core/oauth` (Google, Microsoft).
 - `mail.build()`, `buildMessage()`, `session.appendMessage()`, `mail.saveToSent()`, `send(opts, { saveToSent })`.

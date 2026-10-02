@@ -145,6 +145,27 @@ const META = {
     run:         'npx tsx queue-persistence.ts enqueue && npx tsx queue-persistence.ts deliver',
     features:    ['Jobs survive crashes, delivered once', 'Multi-process leases', 'shutdown() keeps unsent mail', 'Buffer attachments persisted'],
   },
+  'oauth-app-only.ts': {
+    description: '@mailts/core — organisation-wide mailbox access: Google service account + Microsoft client credentials | typescript email oauth2 workspace',
+    title:       'App-only OAuth — Google Workspace / Microsoft 365 without user sign-in',
+    install:     'npm install @mailts/core',
+    run:         'GOOGLE_SA_KEY=./sa.json MAILBOX=support@company.com npx tsx oauth-app-only.ts google',
+    features:    ['Service account domain-wide delegation', 'Microsoft client credentials (secret / certificate)', 'Read and send as a shared mailbox'],
+  },
+  'mailbox-any-provider.ts': {
+    description: '@mailts/core — one mailbox API for IMAP, Microsoft Graph and Gmail API | typescript email imap graph gmail',
+    title:       'One Mailbox API for IMAP, Microsoft Graph and Gmail',
+    install:     'npm install @mailts/core',
+    run:         'PROVIDER=gmail MAIL_USER=… GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… GOOGLE_REFRESH_TOKEN=… npx tsx mailbox-any-provider.ts',
+    features:    ['Provider-neutral fetch / search / flags / move / drafts', 'watch() for new mail', 'Graph and Gmail API without IMAP'],
+  },
+  'newsletter-unsubscribe.ts': {
+    description: '@mailts/core — bulk email: one-click unsubscribe (RFC 8058), rate limits, idempotency | typescript email newsletter',
+    title:       'Newsletter sending: one-click unsubscribe, rate limits, idempotency',
+    install:     'npm install @mailts/core',
+    run:         'npx tsx newsletter-unsubscribe.ts',
+    features:    ['List-Unsubscribe + one-click POST', 'Queue rate limiting', 'Idempotency keys — never email twice'],
+  },
   'imap-manage.ts': {
     description: '@mailts/core — IMAP management: flags, copy, move, delete, append, CONDSTORE | typescript email imap',
     title:       'IMAP: flags, copy, move, delete, append, CONDSTORE',

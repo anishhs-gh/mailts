@@ -7,9 +7,12 @@
  * Asks for your details, signs in through the browser, reads your 5 newest
  * INBOX subjects (read-only), sends one test email, then logs out and (for
  * Google) revokes access. Tokens stay in memory — nothing is saved.
+ *
+ * For Google you can choose IMAP/SMTP or the Gmail API (enable "Gmail API" in
+ * your Cloud project first).
  */
 import { createInterface } from 'node:readline/promises';
-import { MailTs, ImapSession } from '../dist/index.js';
+import { MailTs, ImapSession, imapMailbox, GmailMailbox, GmailTransport } from '../dist/index.js';
 import {
   authorizeWithLoopback,
   createTokenProvider,
@@ -39,6 +42,8 @@ const isGoogle = which.startsWith('g');
 const user = await ask('Your email address', isGoogle ? 'anishsh701@gmail.com' : 'shekhanish@rezolve.com');
 const clientId = await ask('OAuth client ID');
 const clientSecret = isGoogle ? await ask('OAuth client secret') : undefined;
+const via = isGoogle ? (await ask('Use imap (IMAP+SMTP) or api (Gmail API)', 'imap')).toLowerCase() : 'imap';
+const useApi = via.startsWith('a');
 const to = await ask('Send the test email to', user);
 rl.close();
 
@@ -73,24 +78,25 @@ const getToken = createTokenProvider({
   expiresAt: tokens.expiresAt,
 });
 const config = mailConfigFor(provider, { user, getToken });
-const imap = new ImapSession(config.imap);
-const mail = new MailTs({ smtp: { ...config.smtp, pool: false } });
+const box = useApi ? new GmailMailbox({ user, getToken }) : imapMailbox(new ImapSession(config.imap));
+const mail = new MailTs(useApi
+  ? { transport: new GmailTransport({ user, getToken }) }
+  : { smtp: { ...config.smtp, pool: false } });
 
-console.log('\n2. Read mail (IMAP, read-only)');
-await time('Connected to IMAP', () => imap.connect());
-const status = await time('Opened INBOX', () => imap.open('INBOX'));
-if (status) console.log(`    ${status.exists} messages, ${status.unseen ?? '?'} unseen`);
-const latest = await time('Fetched 5 newest headers', () => imap.fetch({ limit: 5 }));
-for (const m of (latest ?? []).reverse()) {
+console.log(`\n2. Read mail (${useApi ? 'Gmail API' : 'IMAP'}, read-only)`);
+const status = await time('Read INBOX status', () => box.status('INBOX'));
+if (status) console.log(`    ${status.total} messages, ${status.unread ?? '?'} unread`);
+const latest = await time('Fetched 5 newest headers', () => box.fetch({ limit: 5 }));
+for (const m of latest ?? []) {
   console.log(`    • ${m.envelope.subject || '(no subject)'}`);
 }
 
-console.log('\n3. Send a test email (SMTP)');
+console.log(`\n3. Send a test email (${useApi ? 'Gmail API' : 'SMTP'})`);
 const sent = await time(`Sent to ${to}`, async () => {
   const r = await mail.send({
     from: user,
     to,
-    subject: `mailts OAuth test — ${new Date().toLocaleString()}`,
+    subject: `mailts OAuth test (${useApi ? 'Gmail API' : 'IMAP/SMTP'}) — ${new Date().toLocaleString()}`,
     text: 'This email was sent by the @mailts/core OAuth test script. No reply needed.',
   });
   if (!r.ok) throw r.error;
@@ -99,7 +105,7 @@ const sent = await time(`Sent to ${to}`, async () => {
 if (sent) console.log(`    Message-ID ${sent.messageId}`);
 
 console.log('\n4. Log out');
-await time('Closed IMAP (LOGOUT)', () => imap.close());
+await time(useApi ? 'Closed mailbox' : 'Closed IMAP (LOGOUT)', () => box.close());
 await time('Closed SMTP', () => mail.shutdown());
 if (isGoogle) {
   await time('Revoked Google access', async () => {

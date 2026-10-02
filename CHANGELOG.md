@@ -33,6 +33,16 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 - `MailWorker` pulled the whole external queue into memory, spun on empty `dequeue()`, and crashed the process on an `ack`/`nack` rejection.
 - `configure()` leaked replaced pools and SQLite handles; documented queue defaults did not match the code.
 
+### Fixed — Transports and proxy
+
+- HTTP transports threw plain `Error`s, so rate limits (429) and outages (5xx) went straight to the DLQ. They now throw `TransportError` (retryable for 408/425/429/5xx and network failures, `retryAfterMs` honoured by the queue; 401/403 → `EAUTH`).
+- Replies sent via Resend, SendGrid or Postmark left the thread (In-Reply-To / References were dropped); JSON-API transports now forward threading and unsubscribe headers.
+- A non-JSON success body crashed the send; SES had no endpoint override (signing now verified against the AWS SigV4 test vector).
+- Connections through an HTTP CONNECT, SOCKS5 or SOCKS4 proxy hung when the SMTP greeting arrived in the same packet as the proxy reply (bytes were discarded).
+- `SmtpTransport` reported every recipient as accepted.
+- Reusing a job `id` on `SqliteQueue` re-sent an already delivered job; ids are now unique for the lifetime of the database.
+- SMTP reply-stream errors (oversized replies) crashed the process via an unhandled `error` event.
+
 ### Fixed — SMTP and MIME
 
 - Credentials could be sent in clear text when a server (or attacker) omitted STARTTLS — `requireTLS` now defaults on when authenticating (loopback hosts exempt).
@@ -47,6 +57,14 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 ### Added
 
+- **One mailbox API** (`@mailts/core/mailbox`, also exported from the root): the `Mailbox` interface with `imapMailbox(session)`, `GraphMailbox` (Microsoft 365 via Graph — experimental) and `GmailMailbox` (Gmail API): list, status, fetch with bodies, search, raw source, flags, move, delete, append, watch.
+- **`GraphTransport` / `GmailTransport`** — send through Microsoft Graph (works when SMTP AUTH is disabled; experimental) or the Gmail API, with the MIME mailts built.
+- **App-only OAuth**: `googleServiceAccountProvider` (domain-wide delegation) and `microsoftAppOnlyProvider` (client credentials, secret or certificate — experimental); `SCOPES` presets, `microsoft({ api: 'graph' })`, `googleWith(scopes)`.
+- **`buildReply` / `buildForward`** — threading, reply-all, quoting, forward inline or as `message/rfc822`.
+- **One-click unsubscribe**: `EmailOptions.unsubscribe` (List-Unsubscribe + List-Unsubscribe-Post, DKIM-signed by default), `isOneClickUnsubscribe()`.
+- **Queue**: `idempotencyKey` (persisted by SQLite, schema v3), Message-ID pinned at enqueue, `rateLimit` (per second/minute/hour/day, per queue/sender/custom, recipient counting), `throttled` event; `MailWorker` honours `DriverMessage.idempotencyKey`.
+- **Limits**: `imap.limits` (literal / response / line bytes → `LimitError`, `ELIMIT`), `parseMessage(raw, { maxParts, maxHeaderBytes, maxDepth })` with `truncated`, SMTP reply caps. TLS `minVersion` defaults to TLSv1.2.
+- `TransportError`, `LimitError`; `HttpResponse.raw`; `TransportResult.providerMessageId` / `threadId`.
 - **`@mailts/core/oauth`** — Google and Microsoft: `authorizeWithLoopback()` (PKCE, CLI browser flow), `buildAuthorizationUrl()` / `exchangeCode()` (web), `refreshAccessToken()`, cached single-flight `googleTokenProvider()` / `microsoftTokenProvider()` with refresh-token rotation callbacks, `mailConfigFor()` presets.
 - `auth.getToken` for XOAUTH2 on SMTP and IMAP — called per connect, refreshed once on rejection.
 - `mail.build()`, exported `buildMessage()`, `session.appendMessage()`, `mail.saveToSent()`, `send(opts, { saveToSent })`.
@@ -67,7 +85,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 ### Examples
 
-- New: `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `oauth-test.mjs` (interactive live smoke test against the built package).
+- New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
 - Updated for 0.5: `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
 
 ## [0.4.0] — 2026-06-22
