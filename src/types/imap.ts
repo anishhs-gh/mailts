@@ -1,6 +1,7 @@
 import type { TLSSocketOptions } from 'tls';
 import type { EmailAddress } from './core.js';
 import type { MailAuth } from './auth.js';
+import type { ImapLimits } from '../imap/ImapParser.js';
 
 export interface ImapConfig {
   host: string;
@@ -18,7 +19,14 @@ export interface ImapConfig {
    * @default 30_000
    */
   socketTimeout?: number;
+  /** TLS options. `minVersion` defaults to `'TLSv1.2'`. */
   tls?: TLSSocketOptions;
+  /**
+   * Size limits for server responses (protects against hostile or broken
+   * servers). Exceeding one fails the command with `LimitError` and closes the
+   * connection. Defaults: 64 MiB literal, 128 MiB response, 1 MiB line.
+   */
+  limits?: ImapLimits;
   /**
    * On a plain (non-`secure`) connection, upgrade with STARTTLS when offered and
    * refuse to log in in clear text otherwise. Defaults to `true`, except for

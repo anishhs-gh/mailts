@@ -1,7 +1,9 @@
 import { Transform, type TransformCallback } from 'stream';
 import { SmtpReply } from './SmtpReply.js';
 
-const MAX_LINE = 8192; // guard against malformed servers
+const MAX_LINE = 8192;    // guard against malformed servers
+const MAX_LINES = 1_000;  // lines in one multi-line reply
+const MAX_BUFFER = 64 * 1024; // unterminated input
 
 /**
  * Transform stream that accumulates raw bytes from a socket and emits
@@ -21,6 +23,10 @@ export class SmtpStream extends Transform {
 
   override _transform(chunk: Buffer, _enc: string, cb: TransformCallback): void {
     this.buf += chunk.toString('binary');
+    if (this.buf.length > MAX_BUFFER && this.buf.indexOf('\r\n') === -1) {
+      cb(new Error(`SMTP reply exceeds ${MAX_BUFFER} bytes without CRLF`));
+      return;
+    }
 
     let crlf: number;
     while ((crlf = this.buf.indexOf('\r\n')) !== -1) {
@@ -57,6 +63,10 @@ export class SmtpStream extends Transform {
 
     const separator = line[3];
     this.currentCode = code;
+    if (this.currentLines.length >= MAX_LINES) {
+      this.destroy(new Error(`SMTP reply exceeds ${MAX_LINES} lines`));
+      return;
+    }
     this.currentLines.push(line);
 
     if (separator === '-') {

@@ -7,7 +7,7 @@ import { parseFetchAttributes, messageFromAttributes, normalizeSection, type Fet
 import { Literal, tokenize, tokStr, tokList, tokNum, isNil, uidSets, decodeMailboxName, type CommandPart } from './ImapTokenizer.js';
 import type { BodyNode } from './ImapBodyStructure.js';
 import { Credential, parseXOAuth2Error } from '../core/Credential.js';
-import { resolveRequireTLS } from '../core/net.js';
+import { resolveRequireTLS, tlsDefaults } from '../core/net.js';
 import type { Logger } from '../logger/Logger.js';
 import type {
   ImapConfig,
@@ -17,7 +17,7 @@ import type {
   ImapAppendResult,
   ImapStatusResult,
 } from '../types/imap.js';
-import { ImapError, ImapAuthError, ImapConnError } from '../errors.js';
+import { ImapError, ImapAuthError, ImapConnError, LimitError } from '../errors.js';
 
 type ImapState =
   | 'idle'
@@ -67,7 +67,7 @@ const SPECIAL_USE = new Set(['\\ALL', '\\ARCHIVE', '\\DRAFTS', '\\FLAGGED', '\\J
  */
 export class ImapClient extends EventEmitter {
   private socket: net.Socket | tls.TLSSocket | null = null;
-  private parser = new ImapParser();
+  private parser: ImapParser;
   private state: ImapState = 'idle';
   private tagSeq = 0;
   private current: Pending | null = null;
@@ -93,6 +93,7 @@ export class ImapClient extends EventEmitter {
     super();
     this.config = config;
     this.logger = logger ?? null;
+    this.parser = new ImapParser(config.limits);
     // An 'error' event with no listener would crash the process — commands
     // already reject with the same error, so a default no-op listener is safe.
     this.on('error', () => {});
@@ -148,11 +149,21 @@ export class ImapClient extends EventEmitter {
 
   private attach(socket: net.Socket | tls.TLSSocket): void {
     this.socket = socket;
-    this.parser = new ImapParser();
+    this.parser = new ImapParser(this.config.limits);
 
     socket.on('data', (chunk: Buffer) => {
       if (this.current) this.armTimer(this.current);
-      for (const r of this.parser.feed(chunk)) {
+      let responses: ImapResponse[];
+      try {
+        responses = this.parser.feed(chunk);
+      } catch (err) {
+        // A limit violation leaves the stream unsynchronised — fail and close.
+        this.closedError = err instanceof LimitError ? err : new ImapConnError(String(err));
+        this.logger?.warn('imap', `Closing connection: ${(err as Error).message}`);
+        socket.destroy();
+        return;
+      }
+      for (const r of responses) {
         this.logResponse(r);
         this.handleResponse(r);
       }
@@ -186,7 +197,7 @@ export class ImapClient extends EventEmitter {
     await this.run(['STARTTLS']);
     const raw = this.socket!;
     raw.removeAllListeners('data');
-    const secured = tls.connect({ ...this.config.tls, socket: raw, servername: this.config.host });
+    const secured = tls.connect({ ...tlsDefaults(this.config.tls), socket: raw, servername: this.config.host });
     await new Promise<void>((resolve, reject) => {
       secured.once('secureConnect', () => resolve());
       secured.once('error', (e) => reject(new ImapError(`IMAP STARTTLS failed: ${e.message}`, false, 'ETLS')));
@@ -841,7 +852,7 @@ function openSocket(
 ): Promise<net.Socket | tls.TLSSocket> {
   return new Promise((resolve, reject) => {
     const socket = secure
-      ? tls.connect(port, host, { ...tlsOpts, servername: host })
+      ? tls.connect(port, host, { ...tlsDefaults(tlsOpts), servername: host })
       : net.createConnection(port, host);
     const timer = setTimeout(() => {
       socket.destroy();

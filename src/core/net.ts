@@ -8,3 +8,11 @@ export function isLoopbackHost(host: string): boolean {
 export function resolveRequireTLS(explicit: boolean | undefined, host: string): boolean {
   return explicit ?? !isLoopbackHost(host);
 }
+
+/**
+ * TLS options with secure defaults: TLS 1.2+ unless the caller sets `minVersion`.
+ * Caller options always win (e.g. `rejectUnauthorized: false` for test servers).
+ */
+export function tlsDefaults<T extends { minVersion?: string }>(opts: T | undefined): T & { minVersion: string } {
+  return { minVersion: 'TLSv1.2', ...(opts ?? {}) } as T & { minVersion: string };
+}

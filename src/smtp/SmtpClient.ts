@@ -5,7 +5,7 @@ import { SmtpStream } from './SmtpStream.js';
 import { SmtpReply } from './SmtpReply.js';
 import { Cmd, parseCapabilities, dotStuff } from './SmtpCommand.js';
 import { Credential, parseXOAuth2Error } from '../core/Credential.js';
-import { resolveRequireTLS } from '../core/net.js';
+import { resolveRequireTLS, tlsDefaults } from '../core/net.js';
 import { Redactor } from '../logger/Redactor.js';
 import { connectThroughProxy } from './SmtpProxy.js';
 import type { Logger } from '../logger/Logger.js';
@@ -17,6 +17,7 @@ import {
   SmtpRejectError,
   SmtpTimeoutError,
   SmtpTlsError,
+  LimitError,
 } from '../errors.js';
 
 type SmtpState =
@@ -124,7 +125,7 @@ export class SmtpClient extends EventEmitter {
       ).catch(e => { throw new SmtpConnError(`Proxy error: ${(e as Error).message}`); });
 
       if (secure) {
-        const tlsSocket = tls.connect({ socket: tunneled, servername: host, ...tlsOpts });
+        const tlsSocket = tls.connect({ socket: tunneled, servername: host, ...tlsDefaults(tlsOpts) });
         await new Promise<void>((resolve, reject) => {
           tlsSocket.once('secureConnect', resolve);
           tlsSocket.once('error', (e) => reject(new SmtpTlsError(`TLS over proxy failed: ${e.message}`)));
@@ -134,7 +135,7 @@ export class SmtpClient extends EventEmitter {
         socket = tunneled;
       }
     } else if (secure) {
-      const tlsSocket = tls.connect(resolvedPort, host, { ...tlsOpts, servername: host });
+      const tlsSocket = tls.connect(resolvedPort, host, { ...tlsDefaults(tlsOpts), servername: host });
       await new Promise<void>((resolve, reject) => {
         const connTimer = setTimeout(() => { tlsSocket.destroy(); reject(new SmtpTimeoutError('connecting')); }, connectionTimeout);
         tlsSocket.once('secureConnect', () => { clearTimeout(connTimer); resolve(); });
@@ -194,6 +195,13 @@ export class SmtpClient extends EventEmitter {
     socket.pipe(this.stream);
 
     this.stream.on('data', (reply: SmtpReply) => this.onReply(reply));
+    // Oversized / malformed replies: fail pending commands instead of crashing the process
+    this.stream.on('error', (err: Error) => {
+      const wrapped = new LimitError(`SMTP reply rejected: ${err.message}`);
+      this.failPending(wrapped);
+      this.state = 'error';
+      socket.destroy();
+    });
 
     socket.on('timeout', () => {
       this.failPending(new SmtpTimeoutError(this.state));
@@ -283,7 +291,7 @@ export class SmtpClient extends EventEmitter {
     const tlsSocket = tls.connect({
       socket: rawSocket,
       servername: this.config.host,
-      ...this.config.tls,
+      ...tlsDefaults(this.config.tls),
     });
 
     await new Promise<void>((resolve, reject) => {

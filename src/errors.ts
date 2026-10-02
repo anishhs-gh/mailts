@@ -9,7 +9,8 @@ export type ErrorCode =
   | 'EMIME'
   | 'EQUEUE'
   | 'EIMAP'
-  | 'ETEMPLATE';
+  | 'ETEMPLATE'
+  | 'ELIMIT';
 
 /** Base error for all mailts failures. Check `code` to distinguish categories. */
 export class MailTsError extends Error {
@@ -134,6 +135,17 @@ export class QueueError extends MailTsError {
   constructor(message: string) {
     super(message, 'EQUEUE', false);
     this.name = 'QueueError';
+  }
+}
+
+/**
+ * Thrown when a server response or message exceeds a configured size limit
+ * (`imap.limits`, SMTP reply size). Never retryable — the input will not shrink.
+ */
+export class LimitError extends MailTsError {
+  constructor(message: string) {
+    super(message, 'ELIMIT', false);
+    this.name = 'LimitError';
   }
 }
 

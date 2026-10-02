@@ -64,6 +64,7 @@ export {
   ImapConnError,
   QueueError,
   OAuthError,
+  LimitError,
   ConfigError,
   MimeError,
   TemplateError,
@@ -102,7 +103,7 @@ export { buildMessage } from './core/Message.js';
 export type { BuiltMessage, BuildOptions } from './core/Message.js';
 export type { AttachmentPathPolicy } from './core/Attachment.js';
 export { parseMessage, parseAddressHeader } from './core/MimeParser.js';
-export type { ParsedMessage, MimePart } from './core/MimeParser.js';
+export type { ParsedMessage, MimePart, MimeLimits } from './core/MimeParser.js';
 export { signDkim } from './core/Dkim.js';
 export { htmlToText } from './core/HtmlToText.js';
 export { buildICalString } from './core/ICal.js';
@@ -111,6 +112,7 @@ export { buildICalString } from './core/ICal.js';
 export { ImapClient } from './imap/ImapClient.js';
 export { ImapSession } from './imap/ImapSession.js';
 export { MailboxWatcher } from './imap/MailboxWatcher.js';
+export type { ImapLimits } from './imap/ImapParser.js';
 export type { WatchOptions } from './imap/MailboxWatcher.js';
 export { parseBodyStructure } from './imap/ImapBodyStructure.js';
 export type { BodyNode, BodyLeaf, BodyMultipart } from './imap/ImapBodyStructure.js';

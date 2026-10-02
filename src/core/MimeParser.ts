@@ -234,12 +234,39 @@ export interface MimePart {
   message?: MimePart;
 }
 
-const MAX_DEPTH = 32;
+/** Limits applied while parsing untrusted MIME. */
+export interface MimeLimits {
+  /** Maximum nesting of multipart / message/rfc822. @default 32 */
+  maxDepth?: number;
+  /** Maximum number of MIME parts in one message. @default 1_000 */
+  maxParts?: number;
+  /** Maximum bytes of one header block. @default 256 KiB */
+  maxHeaderBytes?: number;
+}
 
-/** Parse a full RFC 5322 message (or a MIME entity) into a part tree. */
-export function parseMime(raw: Buffer | string, defaultType = 'text/plain', depth = 0): MimePart {
+const DEFAULT_MIME_LIMITS: Required<MimeLimits> = { maxDepth: 32, maxParts: 1_000, maxHeaderBytes: 256 * 1024 };
+
+interface ParseContext {
+  limits: Required<MimeLimits>;
+  parts: number;
+  truncated: boolean;
+}
+
+/**
+ * Parse a full RFC 5322 message (or a MIME entity) into a part tree.
+ * Over-limit input is truncated (see `parseMessage(...).truncated`), never thrown.
+ */
+export function parseMime(raw: Buffer | string, defaultType = 'text/plain', depth = 0, ctx?: ParseContext): MimePart {
+  const c: ParseContext = ctx ?? { limits: DEFAULT_MIME_LIMITS, parts: 0, truncated: false };
+  c.parts++;
   const s = typeof raw === 'string' ? raw : raw.toString('latin1');
-  const { head, body } = splitHeadBody(s);
+  const split = splitHeadBody(s);
+  let head = split.head;
+  const body = split.body;
+  if (head.length > c.limits.maxHeaderBytes) {
+    head = head.slice(0, c.limits.maxHeaderBytes);
+    c.truncated = true;
+  }
   const headers = new MimeHeaders(head);
   const ct = parseHeaderValue(headers.raw('content-type'));
   const cd = parseHeaderValue(headers.raw('content-disposition'));
@@ -255,16 +282,22 @@ export function parseMime(raw: Buffer | string, defaultType = 'text/plain', dept
     rawBody: body,
   };
 
-  if (depth >= MAX_DEPTH) return part;
+  const nests = contentType.startsWith('multipart/') || contentType === 'message/rfc822' || contentType === 'message/global';
+  if (nests && depth >= c.limits.maxDepth) { c.truncated = true; return part; }
 
   if (contentType.startsWith('multipart/') && ct.params['boundary']) {
     const childDefault = contentType === 'multipart/digest' ? 'message/rfc822' : 'text/plain';
-    part.parts = splitMultipart(body, ct.params['boundary']).map(p => parseMime(p, childDefault, depth + 1));
+    part.parts = [];
+    for (const p of splitMultipart(body, ct.params['boundary'])) {
+      if (c.parts >= c.limits.maxParts) { c.truncated = true; break; }
+      part.parts.push(parseMime(p, childDefault, depth + 1, c));
+    }
   } else if (contentType === 'message/rfc822' || contentType === 'message/global') {
+    if (c.parts >= c.limits.maxParts) { c.truncated = true; return part; }
     const inner = ['base64', 'quoted-printable'].includes(part.encoding)
       ? decodeTransfer(body, part.encoding).toString('latin1')
       : body;
-    part.message = parseMime(inner, 'text/plain', depth + 1);
+    part.message = parseMime(inner, 'text/plain', depth + 1, c);
   }
   return part;
 }
@@ -384,6 +417,8 @@ export interface ParsedBody {
 }
 
 export interface ParsedMessage extends ParsedBody {
+  /** `true` when the message exceeded a `MimeLimits` bound and was only partly parsed. */
+  truncated: boolean;
   headers: MimeHeaders;
   envelope: ImapEnvelope;
   /** Message-IDs from the References header, oldest first. */
@@ -396,10 +431,12 @@ export interface ParsedMessage extends ParsedBody {
  * Parse a raw RFC 5322 message into headers, envelope, text/html bodies and
  * attachments. Useful for `.eml` files, `fetchSection(uid, '')`, and forwards.
  */
-export function parseMessage(raw: Buffer | string): ParsedMessage {
-  const root = parseMime(raw);
+export function parseMessage(raw: Buffer | string, limits: MimeLimits = {}): ParsedMessage {
+  const ctx: ParseContext = { limits: { ...DEFAULT_MIME_LIMITS, ...limits }, parts: 0, truncated: false };
+  const root = parseMime(raw, 'text/plain', 0, ctx);
   const body = collectBody(root);
   return {
+    truncated: ctx.truncated,
     headers: root.headers,
     envelope: envelopeFromHeaders(root.headers),
     references: parseMessageIds(root.headers.raw('references')),

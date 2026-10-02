@@ -8,6 +8,23 @@
  * large literals are copied once (O(n)) instead of re-concatenated per chunk.
  */
 import { tokenize, isNil, tokList, tokStr } from './ImapTokenizer.js';
+import { LimitError } from '../errors.js';
+
+/** Size limits applied while framing server responses (all in bytes). */
+export interface ImapLimits {
+  /** Largest single literal (message body / section). @default 64 MiB */
+  maxLiteralBytes?: number;
+  /** Largest complete response, literals included. @default 128 MiB */
+  maxResponseBytes?: number;
+  /** Longest line outside literals. @default 1 MiB */
+  maxLineBytes?: number;
+}
+
+export const DEFAULT_IMAP_LIMITS: Required<ImapLimits> = {
+  maxLiteralBytes: 64 * 1024 * 1024,
+  maxResponseBytes: 128 * 1024 * 1024,
+  maxLineBytes: 1024 * 1024,
+};
 
 export type ImapResponseType = 'tagged' | 'untagged' | 'continuation';
 
@@ -32,6 +49,14 @@ const LITERAL_AT_END = /~?\{(\d+)\+?\}$/;
 const CRLF = Buffer.from('\r\n');
 
 export class ImapParser {
+  private readonly limits: Required<ImapLimits>;
+  /** Bytes accumulated for the response being assembled. */
+  private responseBytes = 0;
+
+  constructor(limits: ImapLimits = {}) {
+    this.limits = { ...DEFAULT_IMAP_LIMITS, ...limits };
+  }
+
   /** Unconsumed input. */
   private pending: Buffer[] = [];
   private pendingLen = 0;
@@ -40,6 +65,11 @@ export class ImapParser {
   /** Literal bytes still owed by the server for the current response. */
   private literalRemaining = 0;
 
+  /**
+   * Feed raw bytes; returns every response completed by this chunk.
+   * @throws LimitError when a literal, line or response exceeds `limits` — the
+   *   stream cannot be resynchronised afterwards, so the connection must close.
+   */
   feed(chunk: string | Buffer): ImapResponse[] {
     const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'latin1') : chunk;
     if (buf.length) { this.pending.push(buf); this.pendingLen += buf.length; }
@@ -54,19 +84,38 @@ export class ImapParser {
       }
 
       const line = this.takeLine();
-      if (line === null) break;
+      if (line === null) {
+        if (this.pendingLen > this.limits.maxLineBytes) {
+          throw new LimitError(`IMAP line exceeds ${this.limits.maxLineBytes} bytes without CRLF`);
+        }
+        break;
+      }
+      if (line.length > this.limits.maxLineBytes) {
+        throw new LimitError(`IMAP line of ${line.length} bytes exceeds ${this.limits.maxLineBytes}`);
+      }
+      this.responseBytes += line.length + 2;
 
       const text = line.toString('latin1');
       const lit = LITERAL_AT_END.exec(text);
       if (lit) {
+        const size = Number(lit[1]);
+        // Checked before any literal byte is buffered
+        if (size > this.limits.maxLiteralBytes) {
+          throw new LimitError(`IMAP literal of ${size} bytes exceeds maxLiteralBytes (${this.limits.maxLiteralBytes})`);
+        }
+        if (this.responseBytes + size > this.limits.maxResponseBytes) {
+          throw new LimitError(`IMAP response exceeds maxResponseBytes (${this.limits.maxResponseBytes})`);
+        }
+        this.responseBytes += size;
         this.parts.push(line, CRLF);
-        this.literalRemaining = Number(lit[1]);
+        this.literalRemaining = size;
         continue;
       }
 
       this.parts.push(line);
       const full = this.parts.length === 1 ? text : Buffer.concat(this.parts).toString('latin1');
       this.parts = [];
+      this.responseBytes = 0;
       const parsed = parseLine(full);
       if (parsed) responses.push(parsed);
     }
