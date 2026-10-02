@@ -3,6 +3,9 @@ import { randomBytes } from 'crypto';
 import { RetryPolicy } from './RetryPolicy.js';
 import { DeadLetterQueue } from './DeadLetterQueue.js';
 import { JobController } from './JobController.js';
+import { RateLimiter } from './RateLimiter.js';
+import { generateMessageId } from '../core/Message.js';
+import { parseAddressList } from '../core/Address.js';
 import type {
   QueueJob,
   QueueOptions,
@@ -34,8 +37,8 @@ const PRIORITY_ORDER: JobPriority[] = ['critical', 'high', 'normal', 'low'];
  *
  * Priority: `critical` → `high` → `normal` → `low`, FIFO within a tier.
  *
- * Events: `enqueued`, `scheduled`, `started`, `success`, `retry`, `dead`,
- * `drained`, `cancelled`, `interrupted`.
+ * Events: `enqueued`, `scheduled`, `promoted`, `throttled` (job, waitMs),
+ * `started`, `success`, `retry`, `dead`, `drained`, `cancelled`, `interrupted`.
  */
 export class MailQueue extends EventEmitter {
   private readonly pending: Map<JobPriority, QueueJob[]> = new Map(PRIORITY_ORDER.map(p => [p, []]));
@@ -57,6 +60,12 @@ export class MailQueue extends EventEmitter {
   private closed = false;
 
   private readonly controllers = new Map<string, JobController>();
+  private readonly limiter: RateLimiter | null;
+  protected readonly idempotencyWindowMs: number;
+  /** idempotencyKey → job (kept for the window, any state). */
+  private readonly idempotent = new Map<string, { job: QueueJob; expires: number }>();
+  /** Jobs held back by the rate limiter go back to the front of their tier. */
+  private readonly throttled = new Set<string>();
 
   constructor(opts: QueueOptions = {}, logger?: Logger) {
     super();
@@ -72,6 +81,9 @@ export class MailQueue extends EventEmitter {
       jitter: opts.jitter ?? true,
     });
     this.dlq = new DeadLetterQueue(opts.deadLetter);
+    const limiter = opts.rateLimit ? new RateLimiter(opts.rateLimit) : null;
+    this.limiter = limiter?.enabled ? limiter : null;
+    this.idempotencyWindowMs = opts.idempotencyWindowMs ?? 7 * 86_400_000;
     this.dlq.on('dead', (job: QueueJob, errors: MailTsError[]) => this.emit('dead', job, errors));
   }
 
@@ -94,6 +106,17 @@ export class MailQueue extends EventEmitter {
    */
   enqueue(options: EmailOptions, enqueueOpts: EnqueueOptions = {}): QueueJob {
     if (this.closed) throw new QueueError('Queue is shut down');
+    if (enqueueOpts.idempotencyKey !== undefined) {
+      const existing = this.findIdempotent(enqueueOpts.idempotencyKey);
+      if (existing) {
+        this.logger?.debug('queue', `Idempotency key ${enqueueOpts.idempotencyKey} → existing job ${existing.id}`);
+        return existing;
+      }
+    }
+    // Pin the Message-ID so a resend after a crash carries the same id (clients collapse duplicates)
+    if (!options.messageId) {
+      options = { ...options, messageId: generateMessageId(parseAddressList(options.from)[0]?.email ?? '') };
+    }
     const notBefore = enqueueOpts.sendAt && enqueueOpts.sendAt.getTime() > Date.now() ? enqueueOpts.sendAt : undefined;
     const job: QueueJob = {
       id: enqueueOpts.id ?? randomBytes(8).toString('hex'),
@@ -105,12 +128,30 @@ export class MailQueue extends EventEmitter {
       status: notBefore ? 'scheduled' : 'pending',
       priority: enqueueOpts.priority ?? this.defaultPriority,
       ...(notBefore ? { notBefore } : {}),
+      ...(enqueueOpts.idempotencyKey !== undefined ? { idempotencyKey: enqueueOpts.idempotencyKey } : {}),
     };
     if (this.find(job.id)) throw new QueueError(`Duplicate job id: ${job.id}`);
+    if (job.idempotencyKey !== undefined) {
+      this.idempotent.set(job.idempotencyKey, { job, expires: Date.now() + this.idempotencyWindowMs });
+    }
     this.emit('enqueued', job);
     this.logger?.debug('queue', `Enqueued job ${job.id} (priority: ${job.priority})`);
     this.place(job);
     return job;
+  }
+
+  /**
+   * Look up a job by idempotency key within the window. Persistent queues
+   * override this to consult storage as well.
+   */
+  protected findIdempotent(key: string): QueueJob | undefined {
+    const now = Date.now();
+    if (this.idempotent.size > 1_000) {
+      for (const [k, v] of this.idempotent) if (v.expires <= now) this.idempotent.delete(k);
+    }
+    const hit = this.idempotent.get(key);
+    if (!hit || hit.expires <= now) return undefined;
+    return hit.job;
   }
 
   /**
@@ -143,6 +184,21 @@ export class MailQueue extends EventEmitter {
     while (!this.paused && this.runningJobs.size < this.concurrency) {
       const job = this.nextPending();
       if (!job) break;
+      if (this.limiter) {
+        const wait = this.limiter.waitFor(job);
+        if (wait > 0) {
+          // Over the limit: wait in `scheduled` (no slot held, no attempt counted)
+          job.status = 'scheduled';
+          job.notBefore = new Date(Date.now() + wait);
+          this.throttled.add(job.id);
+          this.scheduled.set(job.id, job);
+          this.armSchedule();
+          this.emit('scheduled', job);
+          this.emit('throttled', job, wait);
+          continue;
+        }
+        this.limiter.record(job);
+      }
       this.runningJobs.set(job.id, job);
       void this.execute(job).finally(() => {
         this.runningJobs.delete(job.id);
@@ -179,7 +235,9 @@ export class MailQueue extends EventEmitter {
         this.scheduled.delete(id);
         job.status = 'pending';
         delete job.notBefore;
-        this.pending.get(job.priority)!.push(job);
+        // Throttled jobs keep their place; retries go to the back of their tier
+        if (this.throttled.delete(id)) this.pending.get(job.priority)!.unshift(job);
+        else this.pending.get(job.priority)!.push(job);
         this.emit('promoted', job);
       }
     }

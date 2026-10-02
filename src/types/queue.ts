@@ -20,6 +20,13 @@ export interface EnqueueOptions {
    * semantics without errors, use `idempotencyKey`.
    */
   id?: string;
+  /**
+   * Deduplicate: if a job with this key was enqueued within
+   * `QueueOptions.idempotencyWindowMs`, return that job instead of creating a
+   * new one — whatever its state — so the same email is never sent twice
+   * (webhook retries, double clicks, request replays). Persisted by `SqliteQueue`.
+   */
+  idempotencyKey?: string;
 }
 
 /** What `shutdown()` does with jobs that have not started. */
@@ -77,6 +84,25 @@ export interface QueueOptions {
   persist?: string | boolean;
   /** Default priority for jobs enqueued without an explicit priority. @default 'normal' */
   defaultPriority?: JobPriority;
+  /** How long an `idempotencyKey` is remembered. @default 7 days */
+  idempotencyWindowMs?: number;
+  /**
+   * Throttle sending to stay under provider limits (e.g. Microsoft 365:
+   * `{ perMinute: 30 }`; Gmail: `{ perDay: 2000 }`). Over-limit jobs wait as
+   * `scheduled` without holding a concurrency slot. Limits apply per process.
+   */
+  rateLimit?: RateLimitOptions;
+}
+
+export interface RateLimitOptions {
+  perSecond?: number;
+  perMinute?: number;
+  perHour?: number;
+  perDay?: number;
+  /** Bucket: whole queue, per sender address, or a custom key. @default 'queue' */
+  by?: 'queue' | 'sender' | ((job: QueueJob) => string);
+  /** Count recipients (to + cc + bcc) instead of messages — how many providers meter. @default false */
+  countRecipients?: boolean;
 }
 
 export interface QueueJob {
@@ -87,8 +113,10 @@ export interface QueueJob {
   createdAt: Date;
   lastAttemptAt: Date | null;
   status: 'pending' | 'scheduled' | 'running' | 'success' | 'dead' | 'cancelled';
-  /** For `scheduled` jobs: not sent before this time (retry backoff or `sendAt`). */
+  /** For `scheduled` jobs: not sent before this time (retry backoff, `sendAt` or rate limit). */
   notBefore?: Date;
+  /** Set when the job was enqueued with an `idempotencyKey`. */
+  idempotencyKey?: string;
   /** Scheduling priority — higher tiers are picked first by the scheduler. */
   priority: JobPriority;
   /** Set when the job is cancelled (via `cancel()` or `cancelAll()`). */

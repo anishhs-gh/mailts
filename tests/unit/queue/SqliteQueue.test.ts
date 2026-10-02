@@ -288,7 +288,7 @@ describe.skipIf(!HAS_SQLITE)('SqliteQueue (Node 22+)', () => {
     expect([...(seen[0]!.content as Buffer)]).toEqual([1, 2, 3]);
     expect(seen[0]!.date).toBeInstanceOf(Date);
     const check = new DatabaseSync(dbPath);
-    expect(check.prepare('PRAGMA user_version').get().user_version).toBe(2);
+    expect(check.prepare('PRAGMA user_version').get().user_version).toBe(3);
     expect(check.prepare(`SELECT status, attempts FROM queue_jobs WHERE id='legacy-1'`).get()).toEqual({ status: 'success', attempts: 2 });
     check.close();
   });

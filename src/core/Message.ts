@@ -51,7 +51,8 @@ function boundary(): string {
   return `----=_Part_${randomBytes(16).toString('hex')}`;
 }
 
-function generateMessageId(from: string): string {
+/** Generate an RFC 5322 Message-ID using the sender's domain. */
+export function generateMessageId(from: string): string {
   const domain = (from.split('@')[1] ?? '').replace(/[^A-Za-z0-9.-]/g, '') || 'mailts.local';
   return `<${randomBytes(12).toString('hex')}@${domain}>`;
 }

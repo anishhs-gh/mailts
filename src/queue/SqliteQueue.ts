@@ -28,7 +28,7 @@ export function resolveQueueDbPath(persist: string | boolean): string {
 }
 
 /** Schema version stored in `PRAGMA user_version`. */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 /** A claim expires when its owner stops renewing it (crash, kill -9). */
 const LEASE_MS = 30_000;
 const POLL_MS = 5_000;
@@ -46,6 +46,7 @@ interface Row {
   not_before: string | null;
   owner: string | null;
   lease_until: number | null;
+  idempotency_key: string | null;
 }
 
 function rowToJob(row: Row): QueueJob {
@@ -61,6 +62,7 @@ function rowToJob(row: Row): QueueJob {
   };
   if (row.cancelled_at) job.cancelledAt = new Date(row.cancelled_at);
   if (row.not_before) job.notBefore = new Date(row.not_before);
+  if (row.idempotency_key) job.idempotencyKey = row.idempotency_key;
   return job;
 }
 
@@ -103,7 +105,9 @@ function migrate(db: DatabaseSync): void {
   add('not_before', 'not_before TEXT');
   add('owner', 'owner TEXT');
   add('lease_until', 'lease_until INTEGER');
+  add('idempotency_key', 'idempotency_key TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS queue_jobs_status ON queue_jobs(status)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS queue_jobs_idem ON queue_jobs(idempotency_key) WHERE idempotency_key IS NOT NULL');
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -155,16 +159,34 @@ export class SqliteQueue extends MailQueue {
     try {
       this.insertRow(job);
     } catch (err) {
-      if (/UNIQUE/i.test((err as Error).message)) throw new QueueError(`Duplicate job id: ${job.id}`);
+      if (/UNIQUE/i.test((err as Error).message)) {
+        throw new QueueError(/idempotency/i.test((err as Error).message)
+          ? `Duplicate idempotency key: ${job.idempotencyKey}`
+          : `Duplicate job id: ${job.id}`);
+      }
       throw err;
     }
+  }
+
+  /** Idempotency lookup that also sees jobs enqueued by earlier runs or other processes. */
+  protected override findIdempotent(key: string): QueueJob | undefined {
+    const inMemory = super.findIdempotent(key);
+    if (inMemory) return inMemory;
+    const row = this.db.prepare(`SELECT * FROM queue_jobs WHERE idempotency_key=?`).get(key) as Row | undefined;
+    if (!row) return undefined;
+    if (Date.parse(row.created_at) < Date.now() - this.idempotencyWindowMs) {
+      // Expired: release the key so a new job can use it
+      this.db.prepare(`UPDATE queue_jobs SET idempotency_key=NULL WHERE id=?`).run(row.id);
+      return undefined;
+    }
+    return this.get(row.id) ?? rowToJob(row);
   }
 
   private insertRow(job: QueueJob): void {
     this.db.prepare(`
       INSERT INTO queue_jobs (id, options, status, priority, attempts, created_at, last_attempt_at, errors,
-                              cancelled_at, not_before, owner, lease_until)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              cancelled_at, not_before, owner, lease_until, idempotency_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       job.id,
       encodeOptions(job.options),
@@ -178,6 +200,7 @@ export class SqliteQueue extends MailQueue {
       job.notBefore?.toISOString() ?? null,
       this.owner,
       Date.now() + LEASE_MS,
+      job.idempotencyKey ?? null,
     );
   }
 

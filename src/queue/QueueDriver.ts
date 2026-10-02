@@ -9,6 +9,13 @@ export interface DriverMessage<T = EmailOptions> {
   data: T;
   /** Optional priority hint forwarded to the `MailQueue` scheduler. */
   priority?: JobPriority;
+  /**
+   * Optional dedupe key. The worker skips messages whose key it has already
+   * accepted (within `queue.idempotencyWindowMs`, per worker process); for
+   * cross-process dedupe, enforce uniqueness in your backend too (Redis
+   * `SET NX`, a Postgres unique index…).
+   */
+  idempotencyKey?: string;
 }
 
 /**

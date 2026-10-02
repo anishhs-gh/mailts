@@ -158,7 +158,12 @@ export class MailWorker extends EventEmitter {
           break;
         }
         if (!msg) { await this.sleep(this.idleDelayMs); continue; }
-        const job = this.queue.enqueue(msg.data, { priority: msg.priority });
+        const job = this.queue.enqueue(msg.data, { priority: msg.priority, idempotencyKey: msg.idempotencyKey });
+        if (this.idMap.has(job.id) || ['success', 'dead', 'cancelled'].includes(job.status)) {
+          // Duplicate delivery of a message we already handled — acknowledge it without sending
+          this.driver.ack(msg.id).catch(err => this.fail(err));
+          continue;
+        }
         this.idMap.set(job.id, msg.id);
       } catch (err) {
         this.fail(err);
