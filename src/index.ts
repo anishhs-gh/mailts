@@ -101,6 +101,8 @@ export type {
 
 // Core utilities
 export { buildMessage } from './core/Message.js';
+export { unsubscribeHeaders, isOneClickUnsubscribe } from './core/Unsubscribe.js';
+export type { UnsubscribeOptions } from './core/Unsubscribe.js';
 export type { BuiltMessage, BuildOptions } from './core/Message.js';
 export type { AttachmentPathPolicy } from './core/Attachment.js';
 export { parseMessage, parseAddressHeader } from './core/MimeParser.js';

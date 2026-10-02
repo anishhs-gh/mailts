@@ -1,6 +1,7 @@
 import type { ICalEvent } from '../core/ICal.js';
+import type { UnsubscribeOptions } from '../core/Unsubscribe.js';
 
-export type { ICalEvent };
+export type { ICalEvent, UnsubscribeOptions };
 
 /** A recipient address — bare email string or `{ email, name }` object. */
 export type EmailAddress = string | { email: string; name?: string };
@@ -70,6 +71,11 @@ export interface EmailOptions {
   inReplyTo?: string;
   /** Thread ancestry (sets `References`), oldest first. Angle brackets optional. */
   references?: string | string[];
+  /**
+   * Adds `List-Unsubscribe` (+ `List-Unsubscribe-Post` for one-click, RFC 8058).
+   * Required by Gmail/Yahoo for bulk senders; DKIM signs both headers by default.
+   */
+  unsubscribe?: UnsubscribeOptions;
   /** Override the `Date` header.  Defaults to `new Date()`. */
   date?: Date;
   /**

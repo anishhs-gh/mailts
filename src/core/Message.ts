@@ -15,6 +15,7 @@ import {
   withParams,
 } from './Headers.js';
 import { MimeError } from '../errors.js';
+import { unsubscribeHeaders } from './Unsubscribe.js';
 
 export interface BuiltMessage {
   /** Raw RFC 5322 message as a Buffer. */
@@ -107,7 +108,13 @@ export async function buildMessage(options: EmailOptions, buildOpts: BuildOption
     headers.push(['X-Priority', '5'], ['X-MSMail-Priority', 'Low'], ['Importance', 'Low']);
   }
 
-  const reserved = new Set(['content-type', 'content-transfer-encoding', 'mime-version']);
+  if (options.unsubscribe) headers.push(...unsubscribeHeaders(options.unsubscribe));
+
+  const reserved = new Set([
+    'content-type', 'content-transfer-encoding', 'mime-version',
+    // Set via `unsubscribe` (validated); a hand-written header is still accepted when `unsubscribe` is unused
+    ...(options.unsubscribe ? ['list-unsubscribe', 'list-unsubscribe-post'] : []),
+  ]);
   for (const [k, v] of Object.entries(options.headers ?? {})) {
     const name = checkHeaderName(k.trim());
     if (reserved.has(name.toLowerCase())) throw new MimeError(`Header "${name}" is managed by the builder`);
