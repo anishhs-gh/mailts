@@ -163,4 +163,32 @@ describe.skipIf(!RUN)('GreenMail integration', () => {
     expect(msgs.map(m => m.envelope.subject).sort()).toEqual(['q0', 'q1', 'q2']);
     await s.close();
   });
+
+  it('imapMailbox() implements the provider-neutral Mailbox API', async () => {
+    const { imapMailbox } = await import('../../src/mailbox/index.js');
+    const { user, mail, imap } = account();
+    await mail.send({ from: user, to: user, subject: 'neutral one', text: 'alpha' });
+    await mail.send({ from: user, to: user, subject: 'neutral two', text: 'beta' });
+    const box = imapMailbox(new ImapSession(imap));
+    await waitFor(async () => ((await box.search({})).length === 2 ? true : undefined));
+
+    const list = await box.fetch({ limit: 10 });
+    expect(list.map(m => m.envelope.subject)).toEqual(['neutral two', 'neutral one']); // newest first
+    expect(list[0]!.flags).not.toContain('\\Seen');
+    expect(await box.search({ subject: 'two' })).toEqual([list[0]!.id]);
+
+    const [full] = await box.fetch({ ids: [list[1]!.id], bodies: true });
+    expect(full!.body!.text).toBe('alpha');
+
+    await box.setSeen([list[0]!.id], true);
+    expect(await box.status()).toEqual({ total: 2, unread: 1 });
+
+    const archived = (await box.listMailboxes()).length;
+    expect(archived).toBeGreaterThan(0);
+    const { id } = await box.append('INBOX', (await mail.build({ from: user, to: user, subject: 'appended', text: 'x' })).raw, { seen: false });
+    expect(id).toBeTruthy();
+    await box.delete([list[1]!.id]);
+    expect((await box.fetch({})).map(m => m.envelope.subject).sort()).toEqual(['appended', 'neutral two']);
+    await box.close();
+  });
 });

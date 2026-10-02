@@ -14,7 +14,10 @@ export interface HttpRequest {
 export interface HttpResponse {
   status: number;
   headers: Record<string, string | string[] | undefined>;
+  /** Body decoded as UTF-8. */
   body: string;
+  /** Body bytes, unmodified (use for binary content such as raw MIME). */
+  raw: Buffer;
 }
 
 /** Minimal `node:https` wrapper — zero deps. */
@@ -42,13 +45,15 @@ export function httpRequest(opts: HttpRequest): Promise<HttpResponse> {
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () =>
+        res.on('end', () => {
+          const raw = Buffer.concat(chunks);
           resolve({
             status: res.statusCode ?? 0,
             headers: res.headers as Record<string, string | string[] | undefined>,
-            body: Buffer.concat(chunks).toString('utf8'),
-          }),
-        );
+            body: raw.toString('utf8'),
+            raw,
+          });
+        });
         res.on('error', reject);
       },
     );

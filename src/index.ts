@@ -111,7 +111,7 @@ export type { ReplyOptions, ForwardOptions, SourceMessage } from './core/Reply.j
 export type { UnsubscribeOptions } from './core/Unsubscribe.js';
 export type { BuiltMessage, BuildOptions } from './core/Message.js';
 export type { AttachmentPathPolicy } from './core/Attachment.js';
-export { parseMessage, parseAddressHeader } from './core/MimeParser.js';
+export { parseMessage, parseAddressHeader, MimeHeaders, envelopeFromHeaders } from './core/MimeParser.js';
 export type { ParsedMessage, MimePart, MimeLimits } from './core/MimeParser.js';
 export { signDkim } from './core/Dkim.js';
 export { htmlToText } from './core/HtmlToText.js';
@@ -144,3 +144,19 @@ export type { HealthResult, SmtpHealth, ImapHealth } from './health/HealthChecke
 
 // Telemetry
 export type { TelemetryHooks } from './telemetry/index.js';
+
+// Provider-neutral mailbox API — IMAP, Microsoft Graph, Gmail API
+export { imapMailbox, PollingWatcher, GraphMailbox, GmailMailbox, toGmailQuery } from './mailbox/index.js';
+export type {
+  Mailbox,
+  MailboxProvider,
+  MailFolder,
+  MailFolderStatus,
+  MailMessage,
+  MailSearch,
+  MailFetchOptions,
+  MailAppendOptions,
+  MailWatcher,
+  GraphMailboxConfig,
+  GmailMailboxConfig,
+} from './mailbox/index.js';

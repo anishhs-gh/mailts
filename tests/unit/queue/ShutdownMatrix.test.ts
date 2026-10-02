@@ -26,13 +26,15 @@ for (const kind of kinds) {
         // The first job is slow (exceeds the timeout); the rest are fast.
         const send = async () => {
           const n = ++sent;
-          await new Promise(r => setTimeout(r, n === 1 && timeoutMs ? 400 : 5));
+          // The first job outlives the setup (and, with a timeout, the timeout); the rest are fast.
+          await new Promise(r => setTimeout(r, n === 1 ? (timeoutMs ? 400 : 150) : 5));
           return ok;
         };
         const q: MailQueue = kind === 'sqlite' ? new SqliteQueue(db, { concurrency: 1 }, undefined, send) : new MailQueue({ concurrency: 1 });
         if (kind === 'memory') q.setSendFn(send);
+        const started = new Promise(r => q.once('started', r));
         for (let i = 0; i < 3; i++) q.enqueue(opts);
-        await new Promise(r => setTimeout(r, 2)); // first job running
+        await started; // first job running, the other two pending
 
         const t0 = Date.now();
         const res = await q.shutdown({ pending, timeoutMs });
