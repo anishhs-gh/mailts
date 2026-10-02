@@ -8,7 +8,7 @@
  *   `auth: { type: 'xoauth2', user, getToken }` with caching, refresh and rotation
  * - `mailConfigFor()` — IMAP + SMTP configs for a provider
  */
-export { google, microsoft, mailConfigFor } from './providers.js';
+export { google, googleWith, microsoft, mailConfigFor, SCOPES } from './providers.js';
 export type { OAuthProvider, MicrosoftOptions } from './providers.js';
 export {
   createPkce,

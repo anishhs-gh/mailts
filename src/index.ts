@@ -90,6 +90,8 @@ export {
   SendGridTransport,
   MailgunTransport,
   SesTransport,
+  GraphTransport,
+  GmailTransport,
 } from './transports/index.js';
 export type {
   ResendConfig,
@@ -97,6 +99,8 @@ export type {
   SendGridConfig,
   MailgunConfig,
   SesConfig,
+  GraphTransportConfig,
+  GmailTransportConfig,
 } from './transports/index.js';
 
 // Core utilities

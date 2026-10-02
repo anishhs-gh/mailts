@@ -18,6 +18,31 @@ export interface OAuthProvider {
 }
 
 /**
+ * Scope sets per API. A Microsoft token is issued for one resource, so IMAP/SMTP
+ * (outlook.office.com) and Graph (graph.microsoft.com) need separate tokens.
+ */
+export const SCOPES = {
+  google: {
+    /** IMAP + SMTP + Gmail API (restricted scope — verification + annual assessment for public apps). */
+    full: ['https://mail.google.com/'],
+    /** Gmail API send only (sensitive, not restricted). */
+    send: ['https://www.googleapis.com/auth/gmail.send'],
+    /** Gmail API read/modify/send without permanent delete (restricted). */
+    modify: ['https://www.googleapis.com/auth/gmail.modify'],
+  },
+  microsoft: {
+    /** IMAP + SMTP AUTH (XOAUTH2). */
+    imapSmtp: ['https://outlook.office.com/IMAP.AccessAsUser.All', 'https://outlook.office.com/SMTP.Send'],
+    /** Microsoft Graph mail. */
+    graph: ['https://graph.microsoft.com/Mail.ReadWrite', 'https://graph.microsoft.com/Mail.Send'],
+    /** Microsoft Graph send only. */
+    graphSend: ['https://graph.microsoft.com/Mail.Send'],
+  },
+} as const;
+
+const OIDC = ['openid', 'email'];
+
+/**
  * Google (Gmail and Google Workspace).
  *
  * Create an OAuth client at https://console.cloud.google.com/apis/credentials —
@@ -30,13 +55,21 @@ export const google: OAuthProvider = {
   id: 'google',
   authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
   tokenUrl: 'https://oauth2.googleapis.com/token',
-  scopes: ['https://mail.google.com/', 'openid', 'email'],
+  scopes: [...SCOPES.google.full, ...OIDC],
   // offline + consent guarantees a refresh token on every authorization
   authParams: { access_type: 'offline', prompt: 'consent' },
   loopbackHost: '127.0.0.1',
   imap: { host: 'imap.gmail.com', port: 993, secure: true },
   smtp: { host: 'smtp.gmail.com', port: 465, secure: true },
 };
+
+/**
+ * Google with a custom scope set, e.g. `googleWith(SCOPES.google.send)` for a
+ * Gmail-API-only sender (no IMAP/SMTP access requested).
+ */
+export function googleWith(scopes: readonly string[]): OAuthProvider {
+  return { ...google, id: 'google', scopes: [...scopes, ...OIDC] };
+}
 
 export interface MicrosoftOptions {
   /**
@@ -46,6 +79,11 @@ export interface MicrosoftOptions {
   tenant?: string;
   /** Sovereign-cloud login host. @default 'login.microsoftonline.com' */
   authority?: string;
+  /**
+   * API to request access for. `'imap-smtp'` (default) for XOAUTH2;
+   * `'graph'` for `GraphTransport` / Graph mailboxes. One token serves one API.
+   */
+  api?: 'imap-smtp' | 'graph' | 'graph-send';
 }
 
 /**
@@ -65,11 +103,9 @@ export function microsoft(opts: MicrosoftOptions = {}): OAuthProvider {
     authorizationUrl: `https://${authority}/${tenant}/oauth2/v2.0/authorize`,
     tokenUrl: `https://${authority}/${tenant}/oauth2/v2.0/token`,
     scopes: [
-      'https://outlook.office.com/IMAP.AccessAsUser.All',
-      'https://outlook.office.com/SMTP.Send',
+      ...(opts.api === 'graph' ? SCOPES.microsoft.graph : opts.api === 'graph-send' ? SCOPES.microsoft.graphSend : SCOPES.microsoft.imapSmtp),
       'offline_access',
-      'openid',
-      'email',
+      ...OIDC,
     ],
     authParams: { prompt: 'select_account' },
     loopbackHost: 'localhost',

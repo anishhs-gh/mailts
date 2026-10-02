@@ -1,7 +1,7 @@
 /** Context passed to a token provider on every (re)authentication. */
 export interface TokenContext {
-  /** Which protocol is authenticating. */
-  protocol: 'smtp' | 'imap';
+  /** Which protocol / API is authenticating. */
+  protocol: 'smtp' | 'imap' | 'graph' | 'gmail';
   /** The login (mailbox address). */
   user: string;
   /**

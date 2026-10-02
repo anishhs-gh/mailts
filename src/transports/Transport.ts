@@ -5,6 +5,10 @@ export interface TransportResult {
   messageId: string;
   accepted: string[];
   rejected: string[];
+  /** Provider-specific id (e.g. Gmail message id), when it differs from the Message-ID. */
+  providerMessageId?: string;
+  /** Provider thread id, when the provider reports one (Gmail). */
+  threadId?: string;
 }
 
 /** Common interface all transports must implement. */
