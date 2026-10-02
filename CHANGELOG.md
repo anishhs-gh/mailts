@@ -15,7 +15,8 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 - `fetchText()` / `textOnly` returned quoted-printable/base64 text undecoded.
 - `LIST` truncated names containing spaces (`[Gmail]/Sent Mail`); modified UTF-7, literal names and NIL delimiters are now handled, and mailbox arguments are encoded.
 - A dropped connection left commands hanging until timeout; they now fail immediately with a retryable `ImapConnError`, and `ImapSession` reconnects on the next call.
-- IDLE: stop always waited 5 s, the completion was never awaited, commands could be written into an IDLE stream, and the untagged buffer grew without bound.
+- IDLE: stop always waited 5 s, the completion was never awaited, commands could be written into an IDLE stream, and the untagged buffer grew without bound. A silently dropped connection (NAT/firewall timeout) no longer stalls IDLE: TCP keepalive, a timeout after DONE, renewal every 9 minutes (`idleRenewalMs`), and a failed IDLE loop closes the connection so watchers reconnect.
+- `MailboxWatcher.stop()` during a reconnect leaked the new connection.
 - XOAUTH2 failures hung the connection (the error challenge was never answered).
 - BODYSTRUCTURE read the disposition from the wrong position for non-text parts; RFC 2231 filenames and `message/rfc822` sub-structures are supported.
 - `[UNSEEN n]` was reported as the unseen count (it is a sequence number — now `firstUnseen`).
@@ -47,7 +48,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 - Credentials could be sent in clear text when a server (or attacker) omitted STARTTLS — `requireTLS` now defaults on when authenticating (loopback hosts exempt).
 - Header injection through attachment filenames and content types; invalid header names are rejected instead of silently repaired.
-- Non-ASCII subjects and custom headers were sent as raw UTF-8 (now RFC 2047); non-ASCII filenames use RFC 2231.
+- Non-ASCII subjects and custom headers were sent as raw UTF-8 (now RFC 2047); non-ASCII filenames use RFC 2231. ASCII text that looks like an encoded word (`=?…?=`) is encoded too, so readers don't decode it.
 - One rejected recipient failed the whole send and `rejected` was always empty.
 - The pool handed broken connections (aborted, failed RSET) to the next caller and leaked abort listeners.
 - XOAUTH2 `334` error challenges poisoned the connection.
