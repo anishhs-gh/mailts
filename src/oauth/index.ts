@@ -31,6 +31,8 @@ export type {
   TokenProviderOptions,
 } from './OAuthClient.js';
 export { authorizeWithLoopback, openBrowser } from './loopback.js';
+export { googleServiceAccountProvider, microsoftAppOnlyProvider } from './appOnly.js';
+export type { GoogleServiceAccountOptions, MicrosoftAppOnlyOptions } from './appOnly.js';
 export type { LoopbackOptions } from './loopback.js';
 export type { TokenProvider, TokenContext } from '../types/auth.js';
 export { OAuthError } from '../errors.js';
