@@ -1,5 +1,5 @@
 import { httpRequest } from './HttpClient.js';
-import { toAddressStrings, resolveApiAttachments } from './utils.js';
+import { toAddressStrings, resolveApiAttachments, apiHeaders, assertOk, parseJson, request } from './utils.js';
 import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
@@ -51,8 +51,9 @@ export class PostmarkTransport implements Transport {
     if (options.bcc)     payload['Bcc']       = toAddressStrings(options.bcc).join(', ');
     if (options.replyTo) payload['ReplyTo']   = toAddressStrings(options.replyTo)[0];
 
-    if (options.headers) {
-      payload['Headers'] = Object.entries(options.headers).map(([Name, Value]) => ({ Name, Value }));
+    const headers = apiHeaders(options, message);
+    if (Object.keys(headers).length) {
+      payload['Headers'] = Object.entries(headers).map(([Name, Value]) => ({ Name, Value }));
     }
 
     if (attachments.length) {
@@ -64,7 +65,7 @@ export class PostmarkTransport implements Transport {
       }));
     }
 
-    const res = await httpRequest({
+    const res = await request('postmark', () => httpRequest({
       method: 'POST',
       url: `${this.base}/email`,
       headers: {
@@ -74,13 +75,10 @@ export class PostmarkTransport implements Transport {
       },
       body: JSON.stringify(payload),
       signal,
-    });
+    }));
+    assertOk('postmark', res);
 
-    if (res.status >= 400) {
-      throw new Error(`Postmark error ${res.status}: ${res.body}`);
-    }
-
-    const data = JSON.parse(res.body) as { MessageID: string };
+    const data = parseJson<{ MessageID: string }>('postmark', res);
     return { messageId: `<${data.MessageID}>`, accepted: message.to, rejected: [] };
   }
 }

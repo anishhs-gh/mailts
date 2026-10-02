@@ -236,7 +236,9 @@ export class MailQueue extends EventEmitter {
       this.logger?.error('queue', `Job ${job.id}: moved to DLQ after ${job.attempts} attempt(s): ${err.message}`);
       return;
     }
-    const delay = this.policy.delayFor(job.attempts - 1);
+    // Respect a provider's Retry-After hint (HTTP 429/503) when it asks for longer
+    const hinted = (err as { retryAfterMs?: unknown }).retryAfterMs;
+    const delay = Math.max(this.policy.delayFor(job.attempts - 1), typeof hinted === 'number' ? hinted : 0);
     job.status = 'scheduled';
     job.notBefore = new Date(Date.now() + delay);
     this.scheduled.set(job.id, job);

@@ -65,6 +65,7 @@ export {
   QueueError,
   OAuthError,
   LimitError,
+  TransportError,
   ConfigError,
   MimeError,
   TemplateError,

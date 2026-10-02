@@ -1,5 +1,5 @@
 import { httpRequest } from './HttpClient.js';
-import { toAddressObjects, resolveApiAttachments } from './utils.js';
+import { toAddressObjects, resolveApiAttachments, apiHeaders, assertOk, request } from './utils.js';
 import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
@@ -57,7 +57,8 @@ export class SendGridTransport implements Transport {
       if (rt) payload['reply_to'] = rt;
     }
 
-    if (options.headers) payload['headers'] = options.headers;
+    const headers = apiHeaders(options, message);
+    if (Object.keys(headers).length) payload['headers'] = headers;
 
     if (attachments.length) {
       payload['attachments'] = attachments.map(a => ({
@@ -69,7 +70,7 @@ export class SendGridTransport implements Transport {
       }));
     }
 
-    const res = await httpRequest({
+    const res = await request('sendgrid', () => httpRequest({
       method: 'POST',
       url: `${this.base}/v3/mail/send`,
       headers: {
@@ -78,11 +79,8 @@ export class SendGridTransport implements Transport {
       },
       body: JSON.stringify(payload),
       signal,
-    });
-
-    if (res.status >= 400) {
-      throw new Error(`SendGrid error ${res.status}: ${res.body}`);
-    }
+    }));
+    assertOk('sendgrid', res);
 
     // SendGrid responds 202 Accepted with no body
     const msgId = res.headers['x-message-id'];

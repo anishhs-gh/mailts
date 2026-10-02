@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto';
 import { httpRequest, buildFormData } from './HttpClient.js';
+import { assertOk, parseJson, request } from './utils.js';
 import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
@@ -61,7 +62,7 @@ export class MailgunTransport implements Transport {
     );
 
     const auth = Buffer.from(`api:${this.config.apiKey}`).toString('base64');
-    const res = await httpRequest({
+    const res = await request('mailgun', () => httpRequest({
       method: 'POST',
       url: `${this.base}/v3/${this.config.domain}/messages.mime`,
       headers: {
@@ -70,13 +71,10 @@ export class MailgunTransport implements Transport {
       },
       body,
       signal,
-    });
+    }));
+    assertOk('mailgun', res);
 
-    if (res.status >= 400) {
-      throw new Error(`Mailgun error ${res.status}: ${res.body}`);
-    }
-
-    const data = JSON.parse(res.body) as { id: string; message: string };
+    const data = parseJson<{ id: string; message: string }>('mailgun', res);
     return { messageId: data.id, accepted: message.to, rejected: [] };
   }
 }
