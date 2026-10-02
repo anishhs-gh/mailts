@@ -28,6 +28,8 @@ export interface WatchOptions {
  */
 export class MailboxWatcher extends EventEmitter {
   private client: ImapClient | null = null;
+  /** Connection being opened (so stop() can abort it). */
+  private connecting: ImapClient | null = null;
   private stopped = false;
   private stopIdle: (() => Promise<void>) | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -56,6 +58,7 @@ export class MailboxWatcher extends EventEmitter {
   /** Stop watching and close the connection. */
   async stop(): Promise<void> {
     this.stopped = true;
+    this.connecting?.destroy();
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     const stopIdle = this.stopIdle;
     this.stopIdle = null;
@@ -66,7 +69,13 @@ export class MailboxWatcher extends EventEmitter {
 
   private async open(): Promise<void> {
     const client = new ImapClient(this.config, this.logger);
-    await client.connect();
+    this.connecting = client;
+    try {
+      await client.connect();
+    } finally {
+      this.connecting = null;
+    }
+    if (this.stopped) { await client.close().catch(() => {}); return; } // stop() raced with the connect
     const status = await client.examine(this.mailbox);
 
     if (this.uidValidity && status.uidValidity !== this.uidValidity) {

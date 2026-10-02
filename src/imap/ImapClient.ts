@@ -52,8 +52,13 @@ interface RunResult {
   untagged: ImapResponse[];
 }
 
-/** Servers must see IDLE renewed before their 30-minute autologout (RFC 2177). */
-const IDLE_RENEWAL = 28 * 60_000;
+/**
+ * Re-issue IDLE well inside the 29-minute limit of RFC 2177, and often enough
+ * that NAT gateways and firewalls (commonly 5–15 min) don't drop the connection.
+ */
+const IDLE_RENEWAL = 9 * 60_000;
+/** TCP keepalive probe interval — detects dead peers that never send RST. */
+const TCP_KEEPALIVE = 60_000;
 const LOG_LIMIT = 2_048;
 
 const SPECIAL_USE = new Set(['\\ALL', '\\ARCHIVE', '\\DRAFTS', '\\FLAGGED', '\\JUNK', '\\SENT', '\\TRASH', '\\IMPORTANT']);
@@ -150,6 +155,7 @@ export class ImapClient extends EventEmitter {
   private attach(socket: net.Socket | tls.TLSSocket): void {
     this.socket = socket;
     this.parser = new ImapParser(this.config.limits);
+    socket.setKeepAlive(true, TCP_KEEPALIVE);
 
     socket.on('data', (chunk: Buffer) => {
       if (this.current) this.armTimer(this.current);
@@ -313,6 +319,7 @@ export class ImapClient extends EventEmitter {
     const first = parts[0];
     const label = typeof first === 'string' ? first.split(' ').slice(0, 2).join(' ') : 'command';
     let continueWaiter: ((r: ImapResponse | null) => void) | null = null;
+    let settled = false;
 
     let pending!: Pending;
     const done = new Promise<ImapResponse>((resolve, reject) => {
@@ -330,8 +337,10 @@ export class ImapClient extends EventEmitter {
         },
       };
     });
-    // Settled early (e.g. literal refused) — wake a pending literal wait
-    done.then(() => continueWaiter?.(null), () => continueWaiter?.(null));
+    // Settled early (e.g. literal refused) — wake a pending literal wait, and make
+    // any later literal in the same command stop instead of waiting forever.
+    const onSettled = () => { settled = true; continueWaiter?.(null); };
+    done.then(onSettled, onSettled);
     this.current = pending;
     this.armTimer(pending);
 
@@ -347,6 +356,7 @@ export class ImapClient extends EventEmitter {
         logLine += part;
         continue;
       }
+      if (settled) { aborted = true; break; } // server already answered (e.g. rejected an earlier literal)
       const n = part.data.length;
       line += nonSync ? `{${n}+}` : `{${n}}`;
       this.write(line + '\r\n');
@@ -354,7 +364,7 @@ export class ImapClient extends EventEmitter {
       line = '';
       logLine = '';
       if (!nonSync) {
-        const cont = await new Promise<ImapResponse | null>(r => { continueWaiter = r; });
+        const cont = settled ? null : await new Promise<ImapResponse | null>(r => { continueWaiter = r; });
         if (cont === null) { aborted = true; break; } // tagged reply instead of "+": literal refused
       }
       this.write(part.data);
@@ -766,7 +776,16 @@ export class ImapClient extends EventEmitter {
         }, () => stopped), true);
       }
     })();
-    loop.catch((e: Error) => { if (first) enterFailed(e); });
+    loop.catch((e: Error) => {
+      if (first) { enterFailed(e); return; }
+      // IDLE broke after it started (server error, timeout): the connection state is
+      // unknown — close it so watchers see 'close' and reconnect instead of stalling.
+      if (!stopped) {
+        this.logger?.warn('imap', `IDLE ended unexpectedly: ${e.message}`);
+        this.emit('error', e);
+        this.destroy();
+      }
+    });
 
     await firstEntry;
     return async () => {
@@ -783,7 +802,7 @@ export class ImapClient extends EventEmitter {
     let wake!: () => void;
     const woken = new Promise<void>(r => { wake = r; });
     let wasEntered = false;
-    const renewal = setTimeout(() => wake(), IDLE_RENEWAL);
+    const renewal = setTimeout(() => wake(), this.config.idleRenewalMs ?? IDLE_RENEWAL);
     renewal.unref?.();
 
     const run = this.exec(['IDLE'], {
@@ -802,6 +821,9 @@ export class ImapClient extends EventEmitter {
       if (wasEntered && this.socket && !this.socket.destroyed) {
         this.logger?.proto('C', 'imap', 'DONE');
         this.write('DONE\r\n');
+        // From here the server must answer promptly; a silent peer means a dead connection.
+        const cur = this.current;
+        if (cur) { cur.timeoutMs = this.config.socketTimeout ?? 30_000; this.armTimer(cur); }
       }
       await run;
     } finally {

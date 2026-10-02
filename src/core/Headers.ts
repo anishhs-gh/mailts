@@ -9,6 +9,9 @@ import { MimeError } from '../errors.js';
 const CTL = /[\r\n\0]/g;
 // eslint-disable-next-line no-control-regex
 const NON_ASCII = /[^\x20-\x7e\t]/;
+/** ASCII text that looks like an RFC 2047 encoded word would be decoded by readers — encode it. */
+const LOOKS_ENCODED = /=\?[^?\s]+\?[bBqQ]\?/;
+const needsEncoding = (v: string) => NON_ASCII.test(v) || LOOKS_ENCODED.test(v);
 const HEADER_NAME = /^[!-9;-~]+$/;
 const TOKEN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
 const MIME_TYPE = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/;
@@ -36,7 +39,7 @@ export function checkContentType(ct: string): string {
  */
 export function encodeUnstructured(value: string): string {
   const v = sanitizeHeaderValue(value);
-  if (!NON_ASCII.test(v)) return v;
+  if (!needsEncoding(v)) return v;
   return encodeWords(v).join(' ');
 }
 
@@ -65,7 +68,7 @@ export function encodeWords(text: string): string[] {
 /** Display-name encoding for addresses: quoted when needed, RFC 2047 when non-ASCII. */
 export function encodeDisplayName(name: string): string {
   const n = sanitizeHeaderValue(name);
-  if (NON_ASCII.test(n)) return encodeWords(n).join(' ');
+  if (needsEncoding(n)) return encodeWords(n).join(' ');
   if (/^[A-Za-z0-9!#$%&'*+/=?^_`{|}~ -]+$/.test(n)) return n;
   return `"${n.replace(/[\\"]/g, m => `\\${m}`)}"`;
 }
@@ -78,7 +81,7 @@ export function encodeDisplayName(name: string): string {
  */
 export function formatParam(name: string, value: string): string {
   const v = sanitizeHeaderValue(value);
-  if (!NON_ASCII.test(v)) {
+  if (!needsEncoding(v)) {
     return TOKEN.test(v) && v.length <= 60 ? `${name}=${v}` : `${name}="${v.replace(/[\\"]/g, m => `\\${m}`)}"`;
   }
   const fallback = v.normalize('NFKD').replace(/[^\x20-\x7e]/g, '_').replace(/[\\"]/g, '_');

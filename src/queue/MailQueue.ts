@@ -323,6 +323,7 @@ export class MailQueue extends EventEmitter {
   }
 
   private markCancelled(job: QueueJob): void {
+    this.throttled.delete(job.id);
     job.status = 'cancelled';
     job.cancelledAt = new Date();
     delete job.notBefore;

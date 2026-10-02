@@ -191,4 +191,31 @@ describe.skipIf(!RUN)('GreenMail integration', () => {
     expect((await box.fetch({})).map(m => m.envelope.subject).sort()).toEqual(['appended', 'neutral two']);
     await box.close();
   });
+
+  it('ImapSession keeps 60 interleaved operations across mailboxes consistent', async () => {
+    const { user, mail, imap } = account();
+    const s = new ImapSession(imap);
+    for (const box of ['Alpha', 'Beta']) await s.createMailbox(box);
+    for (const [box, n] of [['INBOX', 3], ['Alpha', 2], ['Beta', 1]] as const) {
+      for (let i = 0; i < n; i++) await s.appendMessage(box, { from: user, to: user, subject: `${box}-${i}`, text: 'x' });
+    }
+    const ops = Array.from({ length: 60 }, (_, i) => {
+      const box = ['INBOX', 'Alpha', 'Beta'][i % 3]!;
+      return i % 2 === 0
+        ? s.fetch({ mailbox: box }).then(ms => ({ box, subjects: ms.map(m => m.envelope.subject) }))
+        : s.search({}, box).then(uids => ({ box, count: uids.length }));
+    });
+    const results = await Promise.all(ops);
+    const expected: Record<string, number> = { INBOX: 3, Alpha: 2, Beta: 1 };
+    for (const r of results) {
+      if ('subjects' in r) {
+        expect(r.subjects.length).toBe(expected[r.box]);
+        expect(r.subjects.every(x => x.startsWith(r.box))).toBe(true);
+      } else {
+        expect(r.count).toBe(expected[r.box]);
+      }
+    }
+    await s.close();
+    await mail.shutdown();
+  });
 });

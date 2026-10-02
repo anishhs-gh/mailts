@@ -40,6 +40,11 @@ export interface ImapConfig {
    */
   reconnect?: false | { retries?: number; delayMs?: number };
   /**
+   * Re-issue IDLE this often (ms). Shorter values survive aggressive NAT /
+   * firewall idle timeouts; must stay below 29 minutes (RFC 2177). @default 540_000 (9 min)
+   */
+  idleRenewalMs?: number;
+  /**
    * `ImapSession` only: send NOOP after this many ms of inactivity so NATs and
    * servers don't drop an idle connection. `0` disables. @default 0
    */

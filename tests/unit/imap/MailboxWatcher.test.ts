@@ -117,3 +117,31 @@ describe('MailboxWatcher', () => {
     await w.stop();
   });
 });
+
+describe('MailboxWatcher stop races', () => {
+  it('stop() during a reconnect leaves no open connection behind', async () => {
+    let logins = 0;
+    let hold: (() => void) | null = null;
+    const srv = await imapServer({
+      caps: 'IMAP4rev1 IDLE',
+      handler: (line, tag, socket) => {
+        if (/ LOGIN /.test(line) && ++logins === 2) {
+          hold = () => socket.write(`${tag} OK [CAPABILITY IMAP4rev1 IDLE] ok\r\n`); // delay the 2nd login
+          return true;
+        }
+        return idleHandler()(line, tag, socket);
+      },
+    });
+    cleanups.push(srv.close);
+    const w = new MailboxWatcher(cfg(srv.port), 'INBOX', { reconnectDelayMs: 10 });
+    await w.start();
+    (w as unknown as { client: { destroy(): void } }).client.destroy();
+    await new Promise<void>(r => { const t = setInterval(() => { if (hold) { clearInterval(t); r(); } }, 5); });
+    await w.stop();          // while the reconnect is waiting for LOGIN
+    hold!();
+    await new Promise(r => setTimeout(r, 50));
+    expect((w as unknown as { client: unknown }).client).toBeNull();
+    expect(srv.state.connections).toBe(2);
+    expect(srv.state.open).toBe(0);   // both the original and the racing reconnect are closed
+  });
+});

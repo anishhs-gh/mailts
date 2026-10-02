@@ -82,7 +82,8 @@ describe('GraphMailbox', () => {
       envelope: { subject: 'Second', from: [{ email: 'bob@x.com', name: 'Bob' }], messageId: '<m2@x>' },
     });
     const q = reqs.find(r => r.path === '/mailFolders/inbox/messages')!.query;
-    expect(q.get('$filter')).toBe('isRead eq false and receivedDateTime ge 2026-10-01T00:00:00.000Z');
+    // receivedDateTime leads the filter because it is the $orderby property (Graph InefficientFilter rule)
+    expect(q.get('$filter')).toBe('receivedDateTime ge 2026-10-01T00:00:00.000Z and isRead eq false');
     expect(q.get('$orderby')).toBe('receivedDateTime desc');
     expect(reqs.every(r => r.auth === 'Bearer tok')).toBe(true);
   });

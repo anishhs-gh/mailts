@@ -13,6 +13,11 @@ export interface OAuthProvider {
   readonly authParams: Readonly<Record<string, string>>;
   /** Host used in loopback redirect URIs (`127.0.0.1` or `localhost`). */
   readonly loopbackHost: string;
+  /**
+   * Path of the loopback redirect URI. Microsoft matches the registered path
+   * (only the port may vary), so it uses `/` to match `http://localhost`.
+   */
+  readonly loopbackPath: string;
   readonly imap: Pick<ImapConfig, 'host' | 'port' | 'secure'>;
   readonly smtp: Pick<SmtpConfig, 'host' | 'port' | 'secure'>;
 }
@@ -59,6 +64,7 @@ export const google: OAuthProvider = {
   // offline + consent guarantees a refresh token on every authorization
   authParams: { access_type: 'offline', prompt: 'consent' },
   loopbackHost: '127.0.0.1',
+  loopbackPath: '/callback',
   imap: { host: 'imap.gmail.com', port: 993, secure: true },
   smtp: { host: 'smtp.gmail.com', port: 465, secure: true },
 };
@@ -92,7 +98,8 @@ export interface MicrosoftOptions {
  * Register an app at https://entra.microsoft.com → App registrations. Add the
  * delegated permissions `IMAP.AccessAsUser.All` and `SMTP.Send` (Office 365
  * Exchange Online), `offline_access`, and a redirect URI: "Mobile and desktop"
- * `http://localhost` for CLIs (any port is accepted), or your web callback.
+ * `http://localhost` for CLIs (any port is accepted; the loopback flow uses path `/`),
+ * or your web callback.
  * Tenants must allow SMTP AUTH for the mailbox for sending.
  */
 export function microsoft(opts: MicrosoftOptions = {}): OAuthProvider {
@@ -109,6 +116,7 @@ export function microsoft(opts: MicrosoftOptions = {}): OAuthProvider {
     ],
     authParams: { prompt: 'select_account' },
     loopbackHost: 'localhost',
+    loopbackPath: '/',
     imap: { host: 'outlook.office365.com', port: 993, secure: true },
     smtp: { host: 'smtp.office365.com', port: 587, secure: false },
   };

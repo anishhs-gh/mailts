@@ -35,15 +35,16 @@ export async function imapServer(opts: {
   /** Called when an AUTHENTICATE XOAUTH2 arrives; return true to accept the bearer token. */
   acceptToken?: (token: string) => boolean;
   uidNext?: () => number;
-} = {}): Promise<Running<{ connections: number }>> {
+} = {}): Promise<Running<{ connections: number; open: number }>> {
   const log: string[] = [];
-  const state = { connections: 0 };
+  const state = { connections: 0, open: 0 };
   const sockets = new Set<net.Socket>();
   const caps = opts.caps ?? 'IMAP4rev1 IDLE UIDPLUS SASL-IR AUTH=XOAUTH2';
   const server = net.createServer((socket) => {
     state.connections++;
+    state.open++;
     sockets.add(socket);
-    socket.on('close', () => sockets.delete(socket));
+    socket.on('close', () => { sockets.delete(socket); state.open--; });
     socket.on('error', () => {});
     socket.write(`* OK [CAPABILITY ${caps}] ready\r\n`);
     let buf = '';

@@ -52,7 +52,8 @@ export async function authorizeWithLoopback(o: LoopbackOptions): Promise<TokenSe
     server.listen(o.port ?? 0, '127.0.0.1', () => resolve());
   });
   const port = (server.address() as AddressInfo).port;
-  const redirectUri = `http://${o.provider.loopbackHost}:${port}/callback`;
+  const callbackPath = o.provider.loopbackPath ?? '/callback';
+  const redirectUri = `http://${o.provider.loopbackHost}:${port}${callbackPath === '/' ? '' : callbackPath}`;
 
   try {
     const code = await new Promise<string>((resolve, reject) => {
@@ -66,7 +67,10 @@ export async function authorizeWithLoopback(o: LoopbackOptions): Promise<TokenSe
 
       server.on('request', (req, res) => {
         const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`);
-        if (url.pathname !== '/callback') { res.writeHead(404).end(); return; }
+        if (url.pathname !== callbackPath || (!url.searchParams.has('code') && !url.searchParams.has('error'))) {
+          res.writeHead(404).end();
+          return;
+        }
         const p = url.searchParams;
         if (p.get('state') !== state) {
           res.writeHead(400, { 'Content-Type': 'text/plain' }).end('Invalid state');

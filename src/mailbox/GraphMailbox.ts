@@ -184,12 +184,13 @@ export class GraphMailbox implements Mailbox {
       p.set('$search', `"${terms.join(' AND ')}"`);
       return p.toString(); // $search cannot be combined with $filter/$orderby; seen/flagged filtered locally
     }
-    const filters: string[] = [];
+    // Graph rejects $filter + $orderby ("InefficientFilter") unless the $orderby
+    // property also appears first in $filter — so receivedDateTime always leads.
+    const filters: string[] = [`receivedDateTime ge ${(search.since ?? new Date(0)).toISOString()}`];
+    if (search.before) filters.push(`receivedDateTime lt ${search.before.toISOString()}`);
     if (search.seen !== undefined) filters.push(`isRead eq ${search.seen}`);
     if (search.flagged !== undefined) filters.push(search.flagged ? `flag/flagStatus eq 'flagged'` : `flag/flagStatus ne 'flagged'`);
-    if (search.since) filters.push(`receivedDateTime ge ${search.since.toISOString()}`);
-    if (search.before) filters.push(`receivedDateTime lt ${search.before.toISOString()}`);
-    if (filters.length) p.set('$filter', filters.join(' and '));
+    p.set('$filter', filters.join(' and '));
     p.set('$orderby', 'receivedDateTime desc');
     return p.toString();
   }
