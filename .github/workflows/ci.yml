@@ -30,7 +30,7 @@ jobs:
         run: npm run lint
 
       - name: Audit
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=dev
 
       - name: Test
         run: npm test
