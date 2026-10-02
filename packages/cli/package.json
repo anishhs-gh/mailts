@@ -1,6 +1,6 @@
 {
   "name": "@mailts/cli",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Command-line interface for mailts — configure, test, send, read, queue",
   "license": "MIT",
   "author": {
@@ -27,11 +27,13 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@mailts/core": ">=0.1.0 <2.0.0",
-    "@mailts/trap": ">=0.1.0 <2.0.0"
+    "@mailts/core": ">=0.5.0 <2.0.0",
+    "@mailts/trap": ">=1.1.0 <2.0.0"
   },
   "peerDependenciesMeta": {
-    "@mailts/trap": { "optional": true }
+    "@mailts/trap": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@mailts/core": "file:../..",

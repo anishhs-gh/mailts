@@ -15,7 +15,7 @@ export async function queueCommand(args: QueueArgs): Promise<void> {
   const persistCfg = queueCfg?.persist;
 
   if (!persistCfg) {
-    printError('Queue commands require queue.persist in config (needs Node 22+). Add: { "queue": { "persist": true } } to ~/.mailts/config.json');
+    printError('Queue commands require queue.persist in config (needs Node 22.13+). Add: { "queue": { "persist": true } } to ~/.mailts/config.json');
     process.exitCode = 1;
     return;
   }
@@ -53,7 +53,7 @@ export async function queueCommand(args: QueueArgs): Promise<void> {
       printInfo('Queue stats:');
       process.stdout.write(
         `  Pending:   ${stats.pending}\n` +
-        ('scheduled' in stats ? `  Scheduled: ${(stats as { scheduled: number }).scheduled}\n` : '') +
+        `  Scheduled: ${stats.scheduled}\n` +
         `  Running:   ${stats.running}\n` +
         `  Succeeded: ${stats.succeeded}\n` +
         `  Dead:      ${stats.dead}\n` +

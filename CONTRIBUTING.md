@@ -411,7 +411,7 @@ Version bumps are **manual** — edit `package.json` in the PR that introduces t
 
 ## 11. Release & Deployment
 
-Publishing is **always triggered by a Git tag**, never by a CI commit. There is no automated versioning bot. You push the tag; GitHub Actions builds, signs, and publishes.
+Releases are **manual** — run from the GitHub Actions UI (or `gh workflow run`). Pushing a tag does nothing; the workflow creates the tag. You decide which package goes first.
 
 ### One-time setup (per repository)
 
@@ -422,82 +422,59 @@ Publishing is **always triggered by a Git tag**, never by a CI commit. There is 
 
 ### Release workflow per package
 
-Each package has its own workflow file triggered by a specific tag pattern:
-
-| Package | Workflow file | Tag pattern | Example tag |
+| Package | Workflow | Tag it creates | Needs on npm first |
 |---|---|---|---|
-| `@mailts/core` | `release.yml` | `@mailts/core@*` | `@mailts/core@1.2.0` |
-| `@mailts/trap` | `release-trap.yml` | `@mailts/trap@*` | `@mailts/trap@1.0.1` |
-| `@mailts/cli` | `release-cli.yml` | `@mailts/cli@*` | `@mailts/cli@1.0.1` |
-| `@mailts/testing` | `release-testing.yml` | `@mailts/testing@*` | `@mailts/testing@1.0.1` |
+| `@mailts/core` | `release.yml` | `@mailts/core@<version>` | — |
+| `@mailts/trap` | `release-trap.yml` | `@mailts/trap@<version>` | — |
+| `@mailts/cli` | `release-cli.yml` | `@mailts/cli@<version>` | `@mailts/core`, `@mailts/trap` (peer ranges) |
+| `@mailts/testing` | `release-testing.yml` | `@mailts/testing@<version>` | `@mailts/core` (peer), `@mailts/trap` (dependency) |
+
+Order when several packages change: **core → trap → cli / testing**.
+
+Each workflow has one input, `dry_run` (**on by default**):
+
+| Step | `dry_run: true` | `dry_run: false` |
+|---|---|---|
+| Typecheck, test, build | ✓ | ✓ |
+| **Preflight** — version not on npm yet, tag free (or already on this commit), every `@mailts/*` range in `dependencies`/`peerDependencies` satisfiable from npm | ✓ | ✓ |
+| **npm dry run** — token valid, publish permission, `npm publish --dry-run`, `npm pack --dry-run` | ✓ | ✓ |
+| **Release notes** (ledger) — shown in the run summary | preview | used for the release |
+| Create tag + GitHub Release | — | ✓ |
+| `npm publish --provenance` | — | ✓ |
+
+Publishing (`dry_run: false`) is refused on any branch other than `master`; dry runs work on any branch.
 
 ### Step-by-step: releasing a package
 
-**Step 1 — bump the version**
+**1 — bump the version** in the package's `package.json` (and its CHANGELOG), merge to `master`, wait for CI.
 
-Edit `package.json` of the target package, commit, and merge to `main`:
-
-```bash
-# Example: releasing @mailts/core 1.2.0
-# Edit package.json: "version": "1.2.0"
-git add package.json
-git commit -m "chore(core): bump version to 1.2.0"
-git push origin main
-```
-
-Wait for CI to pass on `main` before tagging.
-
-**Step 2 — push the tag**
+**2 — dry run**
 
 ```bash
-git tag '@mailts/core@1.2.0'
-git push origin '@mailts/core@1.2.0'
+gh workflow run release.yml --ref master                 # dry_run defaults to true
+gh run watch
 ```
 
-This triggers `release.yml`. The workflow will:
+Check the run: preflight and npm dry run green, release notes preview in the summary.
 
-1. `npm ci` — install full workspace
-2. Typecheck → Test → Build the package
-3. Verify the tag version matches `package.json` version (fails if mismatched)
-4. **Dry run** (`.github/actions/npm-dry-run`) — `NPM_TOKEN` is valid, the account has read-write access to the package, `npm publish --dry-run` passes, `npm pack --dry-run` lists the tarball. Fails *before* any GitHub Release exists.
-5. **Release notes** (`.github/actions/release-notes`) — [ledger](https://github.com/anishhs-gh/ledger) summarises commits from the previous tag **of the same package** to this tag (via Bedrock). Missing key, first release, or any ledger failure → GitHub's auto-generated notes; a release is never blocked on notes.
-6. Create a GitHub Release with those notes
-7. `npm publish --provenance --access public` — signed with OIDC
-
-> ledger has no path filter, so notes for one package may mention commits that touched other packages in the same range. Edit the release body on GitHub if needed.
-
-**Step 3 — verify the publish**
-
-Check `https://www.npmjs.com/package/@mailts/core` and confirm:
-- Version appears under "Versions"
-- Provenance badge is shown (the shield icon) — this means the release was signed
-
-### Releasing workspace packages
-
-Follow the **same steps** but use the package-specific tag. In addition:
-
-- For `@mailts/trap` and `@mailts/cli`: `@mailts/core` must already be published at the version declared in their `peerDependencies` range.
-- For `@mailts/testing`: both `@mailts/core` and `@mailts/trap` must already be published.
+**3 — publish**
 
 ```bash
-# Publishing @mailts/trap 1.0.1 after mailts 1.0.0 is already on npm
-git tag @mailts/trap@1.0.1
-git push origin @mailts/trap@1.0.1
+gh workflow run release.yml --ref master -f dry_run=false
 ```
 
-The release workflow automatically rewrites `file:../..` → real semver in the published `package.json` before `npm publish`. You never need to edit `devDependencies` manually for publishing.
+The workflow tags `@mailts/core@<version>` on the commit it ran, creates the GitHub Release with the notes, and publishes with provenance. For the other packages use `release-trap.yml`, `release-cli.yml`, `release-testing.yml`.
 
-### What the tag version guard does
+**4 — verify** on `https://www.npmjs.com/package/@mailts/core`: the version is listed and the provenance badge is shown.
 
-Each workflow contains:
+**Release notes** — [ledger](https://github.com/anishhs-gh/ledger) summarises commits from the previous tag **of the same package** to this release (via Bedrock). Missing key, first release, or any ledger failure → GitHub's auto-generated notes; a release is never blocked on notes. ledger has no path filter, so notes may mention commits to other packages in the same range — edit the release body on GitHub if needed.
 
-```bash
-PKG_VERSION=$(node -p "require('./package.json').version")
-TAG_VERSION="${GITHUB_REF_NAME#@mailts/core@}"
-if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then exit 1; fi
-```
+The workflow rewrites `file:` devDependencies to real semver in the published `package.json`. `peerDependencies` / `dependencies` on `@mailts/*` are maintained by hand — raise their minimums when a package needs newer core/trap features.
 
-If the tag is `@mailts/core@1.2.0` but `package.json` says `1.1.0`, the workflow fails immediately. This prevents publishing the wrong version. Fix: update `package.json`, merge, re-tag.
+### Re-running a failed release
+
+- Failed **before** the GitHub Release → fix, merge, run again.
+- Failed **after** the GitHub Release but before npm publish → re-run the same workflow on the same commit; preflight accepts a tag that already points at that commit.
 
 ### Rollback / yanking a release
 
@@ -512,9 +489,9 @@ Then publish a patch fix immediately.
 ### What NOT to do
 
 - Do not run `npm publish` locally — always let GitHub Actions publish. Local publishes lose provenance signing.
-- Do not tag before the version bump is merged to `main` — the workflow checks out `main`'s code.
-- Do not force-push tags. If a tag was pushed in error, delete it (`git push --delete origin '@mailts/core@1.2.0'`) and re-tag after fixing.
-- Do not amend commits that have already been tagged.
+- Do not push release tags by hand — the workflow creates them.
+- Do not publish (`dry_run: false`) before the version bump is merged to `master`.
+- Do not force-push or move release tags. If a release was cut in error, deprecate it on npm and release a patch.
 
 ---
 
@@ -573,13 +550,13 @@ npm install
 npm run dev                              # watch root
 npm run dev --workspace=packages/trap   # watch a package
 
-# Validate before push (all three must be green)
+# Validate before push (all must be green)
 npm run typecheck && npm test && npm run build
 
-# Release (example: @mailts/core 1.2.0)
-# 1. Edit package.json version → commit → merge to main
-# 2. git tag '@mailts/core@1.2.0' && git push origin '@mailts/core@1.2.0'
-# 3. Watch https://github.com/anishhs-gh/mailts/actions
+# Release (order: core → trap → cli / testing)
+# 1. Bump package.json version + CHANGELOG → merge to master
+# 2. gh workflow run release.yml --ref master                 # dry run
+# 3. gh workflow run release.yml --ref master -f dry_run=false  # publish
 # 4. Verify on npmjs.com/package/@mailts/core
 ```
 

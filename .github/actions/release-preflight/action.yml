@@ -1,0 +1,63 @@
+name: 'Release preflight'
+description: >
+  Release-order and re-release guard. Fails when this version is already on npm, when its tag
+  exists on another commit, or when a @mailts/* package it depends on (dependencies or
+  peerDependencies) has no published version in the declared range — i.e. release that one first.
+  Run it after any publish-time package.json rewrites.
+
+inputs:
+  working-directory:
+    description: 'Package directory (repo root for @mailts/core, packages/<name> for workspaces)'
+    required: false
+    default: '.'
+
+outputs:
+  tag:
+    description: 'Release tag, <name>@<version>'
+    value: ${{ steps.check.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check version, tag and @mailts dependencies
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        name="$(node -p "require('./package.json').name")"
+        version="$(node -p "require('./package.json').version")"
+        tag="${name}@${version}"
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        fail=0
+
+        if [ -n "$(npm view "${name}@${version}" version 2>/dev/null)" ]; then
+          echo "::error::${name}@${version} is already on npm — bump the version first."
+          fail=1
+        fi
+
+        if sha="$(git rev-parse -q --verify "refs/tags/${tag}^{commit}")"; then
+          if [ "$sha" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::Tag ${tag} already exists on ${sha}, not on this commit."
+            fail=1
+          else
+            echo "Tag ${tag} already on this commit (re-run) — OK."
+          fi
+        fi
+
+        # Every @mailts/* runtime/peer range must be satisfiable from npm right now.
+        while IFS=$'\t' read -r dep range; do
+          [ -n "$dep" ] || continue
+          if [ -n "$(npm view "${dep}@${range}" version 2>/dev/null)" ]; then
+            echo "OK   ${dep}@${range} is published"
+          else
+            echo "::error::${dep}@${range} is not on npm yet — release ${dep} first."
+            fail=1
+          fi
+        done < <(node -e '
+          const p = require("./package.json");
+          for (const [k, v] of Object.entries({ ...p.peerDependencies, ...p.dependencies }))
+            if (k.startsWith("@mailts/")) console.log(`${k}\t${v}`);')
+
+        [ "$fail" = 0 ] && echo "Preflight passed for ${tag}"
+        exit "$fail"
