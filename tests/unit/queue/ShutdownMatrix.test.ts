@@ -10,12 +10,11 @@ import { MailQueue } from '../../../src/queue/MailQueue.js';
 import { SqliteQueue } from '../../../src/queue/SqliteQueue.js';
 import type { ShutdownPendingMode } from '../../../src/types/queue.js';
 
-const HAS_SQLITE = Number(process.versions.node.split('.')[0]) >= 22;
 const ok = { ok: true as const, messageId: 'm', accepted: [], rejected: [] };
 const opts = { to: 'a@x.com', text: 't' };
 
 type Kind = 'memory' | 'sqlite';
-const kinds: Kind[] = HAS_SQLITE ? ['memory', 'sqlite'] : ['memory'];
+const kinds: Kind[] = ['memory', 'sqlite'];
 
 for (const kind of kinds) {
   for (const pending of ['drain', 'keep', 'cancel'] as ShutdownPendingMode[]) {
@@ -65,7 +64,3 @@ for (const kind of kinds) {
     }
   }
 }
-
-describe.skipIf(HAS_SQLITE)('shutdown matrix', () => {
-  it('SQLite cases need Node 22+', () => { expect(HAS_SQLITE).toBe(false); });
-});

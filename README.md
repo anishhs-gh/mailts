@@ -6,7 +6,7 @@ Modern TypeScript mail library — native SMTP/IMAP over Node.js built-ins, zero
 npm install @mailts/core
 ```
 
-Requires Node.js 20.18+ (SQLite queue persistence needs Node 22+). Upgrading from 0.4? See [MIGRATION.md](MIGRATION.md).
+Requires Node.js 22+ (SQLite queue persistence needs 22.13+). Upgrading from 0.4? See [MIGRATION.md](MIGRATION.md).
 
 ## Features
 

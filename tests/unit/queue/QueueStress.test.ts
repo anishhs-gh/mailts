@@ -10,7 +10,6 @@ import { SqliteQueue } from '../../../src/queue/SqliteQueue.js';
 import { MailTsError } from '../../../src/errors.js';
 import type { QueueJob } from '../../../src/types/queue.js';
 
-const HAS_SQLITE = Number(process.versions.node.split('.')[0]) >= 22;
 
 function rng(seed: number) {
   return () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
@@ -93,7 +92,7 @@ describe('queue stress (randomised)', () => {
     await stress(() => new MailQueue({ concurrency: 4, maxRetries: 2, retryDelay: 1, rateLimit: { perSecond: 200 } }), 9);
   }, 60_000);
 
-  it.skipIf(!HAS_SQLITE)('SqliteQueue invariants hold, and the database agrees', async () => {
+  it('SqliteQueue invariants hold, and the database agrees', async () => {
     const db = join(tmpdir(), `mailts-stress-${Date.now()}.db`);
     const q = () => new SqliteQueue(db, { concurrency: 4, maxRetries: 3, retryDelay: 1, jitter: false });
     const { jobs } = await stress(q, 11);

@@ -80,8 +80,8 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 ### Changed
 
-- Node.js **20.18+** required (build target `node20`).
-- CI runs Node 20/22/24 and an integration suite against GreenMail (`npm run test:integration`).
+- Node.js **22+** required (build target `node22`); Node 18 and 20 are end-of-life. `queue.persist` needs 22.13+.
+- CI runs Node 22/24 and an integration suite against GreenMail (`npm run test:integration`).
 - `npm run typecheck` now also typechecks `examples/`.
 
 ### Examples

@@ -7,7 +7,6 @@ import { SqliteQueue } from '../../../src/queue/SqliteQueue.js';
 import { RateLimiter } from '../../../src/queue/RateLimiter.js';
 import type { EmailOptions } from '../../../src/types/core.js';
 
-const HAS_SQLITE = Number(process.versions.node.split('.')[0]) >= 22;
 const ok = { ok: true as const, messageId: 'm', accepted: [], rejected: [] };
 const opts: EmailOptions = { from: 'me@x.com', to: 'a@x.com', text: 't' };
 const dbFile = () => join(tmpdir(), `mailts-idem-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
@@ -55,7 +54,7 @@ describe('idempotency keys (in memory)', () => {
   });
 });
 
-describe.skipIf(!HAS_SQLITE)('idempotency keys (SqliteQueue)', () => {
+describe('idempotency keys (SqliteQueue)', () => {
   it('survive restarts and are shared by processes on one database', async () => {
     const db = dbFile();
     let sent = 0;

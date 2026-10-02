@@ -3,6 +3,11 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [Unreleased]
+
+### Changed
+- Requires Node.js 22+ (was 18). Node 18 and 20 are end-of-life.
+
 ## [1.0.3] — 2026-05-09
 
 ### Added

@@ -61,7 +61,7 @@
     "CHANGELOG.md"
   ],
   "engines": {
-    "node": ">=20.18.0"
+    "node": ">=22.0.0"
   },
   "workspaces": [
     "packages/*"

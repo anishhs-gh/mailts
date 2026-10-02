@@ -54,8 +54,8 @@ mailts/                        ← root package (npm: @mailts/core)
 
 | Tool | Minimum | Notes |
 |---|---|---|
-| Node.js | 20.18 | 22.x recommended (`node:sqlite` for `SqliteQueue` needs 22.13+) |
-| npm | 10.x | ships with Node 20+ |
+| Node.js | 22.x | 22.13+ to run the `SqliteQueue` tests (`node:sqlite`) |
+| npm | 10.x | ships with Node 22+ |
 | Java | 21 | only for `npm run test:integration` (GreenMail) |
 | Git | 2.x | — |
 
@@ -380,7 +380,7 @@ Breaking changes must include `BREAKING CHANGE:` in the commit body.
 1. **One concern per PR.** A feature PR should not also refactor unrelated code.
 2. Target `main`. No direct pushes to `main` — all changes go through PRs.
 3. Every PR must:
-   - Pass CI: typecheck (incl. examples) + lint + test + build on Node 20, 22 and 24, the GreenMail integration suite, and an `npm publish --dry-run` per package (same-repo PRs only — fork PRs have no `NPM_TOKEN`)
+   - Pass CI: typecheck (incl. examples) + lint + test + build on Node 22 and 24, the GreenMail integration suite, and an `npm publish --dry-run` per package (same-repo PRs only — fork PRs have no `NPM_TOKEN`)
    - Have a description explaining *why* the change is needed
    - Reference any related issue with `Closes #<n>`
 4. For breaking changes: bump the major version in `package.json` and document migration steps in the PR description.

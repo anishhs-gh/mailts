@@ -5,7 +5,7 @@ behaviour changes to check. Tracking issue: [#17](https://github.com/anishhs-gh/
 
 ## Requirements
 
-- **Node.js 20.18+** (was 18). The SQLite queue (`queue.persist`) still needs Node 22+.
+- **Node.js 22+** (was 18). Node 18 and 20 are end-of-life. The SQLite queue (`queue.persist`) needs 22.13+.
 
 ## Behaviour changes
 

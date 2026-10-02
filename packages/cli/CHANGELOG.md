@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ## [Unreleased]
 
+### Changed
+- Requires Node.js 22+ (was 18). Node 18 and 20 are end-of-life.
+
 ### Added
 - `mailts queue status` shows a `Scheduled` row (retries waiting for backoff and `sendAt` jobs) when used with `@mailts/core` 0.5+.
 

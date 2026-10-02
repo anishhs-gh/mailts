@@ -9,7 +9,7 @@ import type { QueueOptions, QueueJob, QueueStats, JobPriority, ShutdownOptions, 
 import { QueueError } from '../errors.js';
 import type { Logger } from '../logger/Logger.js';
 
-// node:sqlite types — may not exist on Node < 22, typed as any
+// node:sqlite types — flagged before Node 22.13, typed as any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DatabaseSync = any;
 
@@ -18,7 +18,7 @@ function loadSqlite(): { DatabaseSync: new (path: string, opts?: unknown) => Dat
     const req = createRequire(import.meta.url);
     return req('node:sqlite');
   } catch {
-    throw new Error('node:sqlite requires Node.js 22+. Upgrade Node or remove queue.persist from config.');
+    throw new Error('node:sqlite requires Node.js 22.13+. Upgrade Node or remove queue.persist from config.');
   }
 }
 
@@ -112,7 +112,7 @@ function migrate(db: DatabaseSync): void {
 }
 
 /**
- * `MailQueue` persisted to SQLite (`node:sqlite`, Node 22+).
+ * `MailQueue` persisted to SQLite (`node:sqlite`, Node 22.13+).
  *
  * - Jobs keep their id across restarts — rows are updated, never duplicated.
  * - Each process claims jobs with a lease; a crashed process's jobs become

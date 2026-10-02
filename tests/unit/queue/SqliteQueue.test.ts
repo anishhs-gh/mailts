@@ -5,9 +5,6 @@ import { rmSync, existsSync } from 'fs';
 import { resolveQueueDbPath, SqliteQueue } from '../../../src/queue/SqliteQueue.js';
 import { homedir } from 'os';
 
-const NODE_MAJOR = parseInt(process.version.slice(1).split('.')[0]!);
-const HAS_SQLITE = NODE_MAJOR >= 22;
-
 const baseOpts = { to: 'u@example.com', subject: 'S', text: 'T' };
 const ok = { ok: true as const, messageId: 'mid', accepted: [], rejected: [] };
 
@@ -23,21 +20,9 @@ describe('resolveQueueDbPath', () => {
   });
 });
 
-// ── Node < 22: throws clear error ─────────────────────────────────────────────
-
-describe.skipIf(HAS_SQLITE)('SqliteQueue on Node < 22', () => {
-  it('throws a clear error when node:sqlite is unavailable', () => {
-    expect(() => new SqliteQueue('/tmp/noop.db')).toThrow('node:sqlite requires Node.js 22+');
-  });
-
-  it('static readStats throws on Node < 22', () => {
-    expect(() => SqliteQueue.readStats('/tmp/noop.db')).toThrow('node:sqlite requires Node.js 22+');
-  });
-});
-
 // ── Node 22+: full behaviour ───────────────────────────────────────────────────
 
-describe.skipIf(!HAS_SQLITE)('SqliteQueue (Node 22+)', () => {
+describe('SqliteQueue', () => {
   let dbPath: string;
 
   beforeEach(() => {

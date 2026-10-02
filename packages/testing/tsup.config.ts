@@ -8,7 +8,7 @@ export default defineConfig({
   sourcemap: false,
   clean: true,
   minify: true,
-  target: 'node18',
+  target: 'node22',
   platform: 'node',
   outDir: 'dist',
 });
