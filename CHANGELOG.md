@@ -3,7 +3,7 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
-## [1.0.0] — Unreleased
+## [1.0.0] — 2026-10-03
 
 First stable release: correctness and security fixes, OAuth, one mailbox API for IMAP / Microsoft Graph / Gmail, connection pooling, a rewritten queue and smart inbox content. From here on the public API follows [semantic versioning](README.md#stability--versioning). Upgrading from 0.4: see [MIGRATION.md](MIGRATION.md). Tracking issue: #17.
 
