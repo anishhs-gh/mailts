@@ -80,6 +80,7 @@
     "test:integration": "MAILTS_IT=1 vitest run tests/integration",
     "greenmail": "node scripts/greenmail.mjs",
     "typecheck:examples": "tsc -p tsconfig.examples.json",
+    "skill:build": "node scripts/build-skill.mjs",
     "example:oauth-web": "node --env-file=examples/.env node_modules/vite-node/vite-node.mjs examples/oauth-web-server.ts"
   },
   "devDependencies": {

@@ -262,6 +262,14 @@ Use this end-to-end checklist for every non-trivial change. Copy it into your PR
 
 ---
 
+### After coding — agent skill
+
+`@mailts/cli` ships an agent skill (`mailts skill install`) in `packages/cli/skill/mailts/`:
+
+- `SKILL.md` is hand-written — update it when a rule of thumb changes (defaults, gotchas, the main recipes).
+- `references/*.md` are generated from `README.md` — run `npm run skill:build` after editing the README. CI fails
+  when they are out of date (`npm run skill:build -- --check`).
+
 ### After coding — examples and gist sync
 
 - [ ] **New example file added** to `examples/` if the feature introduces a new usage pattern
@@ -325,6 +333,8 @@ packages/cli/package.json  →  "version": "X.Y.Z"
 
 ```bash
 npm run typecheck && npm run typecheck:examples && npm test && npm run build
+# Edited README.md? Regenerate the agent skill's references (CI checks this):
+npm run skill:build
 # Touched IMAP/SMTP/MIME? Also (needs Java 21):
 npm run test:integration
 ```

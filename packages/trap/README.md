@@ -132,8 +132,7 @@ new TrapServer({
   host: '127.0.0.1',       // bind address (default: 127.0.0.1)
   maxMessages: 100,         // max messages kept in memory (default: 100)
   maxSize: 26_214_400,      // max accepted message size in bytes (default: 25 MB)
-  persist: true,            // persist to ~/.mailts-trap/ (messages + read status)
-  persist: '/path/to/file', // or a custom file path
+  persist: true,            // persist to ~/.mailts-trap/ (messages + read status) — or a custom file path
 });
 ```
 

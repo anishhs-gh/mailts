@@ -1,14 +1,110 @@
-# @mailts/core
+<div align="center">
 
-Modern TypeScript mail library — native SMTP/IMAP over Node.js built-ins, zero runtime dependencies.
+<a href="https://mailts.anishhs.com">
+  <img src="https://mailts.anishhs.com/logo-icon.png" alt="mailts logo" width="40">
+</a>
 
-```
-npm install @mailts/core
-```
+<h1>mailts</h1>
 
-Requires Node.js 22+ (SQLite queue persistence needs 22.13+). Stable since 1.0 — see [Stability & versioning](#stability--versioning). Upgrading from 0.4? See [MIGRATION.md](MIGRATION.md).
+<p><strong>Email for TypeScript, without the baggage.</strong><br>
+Native SMTP &amp; IMAP, Google &amp; Microsoft OAuth, Gmail &amp; Graph APIs, durable queues —<br>
+built on Node.js alone, with zero runtime dependencies.</p>
 
-## Features
+<p>
+  <a href="https://github.com/anishhs-gh/mailts/actions/workflows/ci.yml"><img src="https://github.com/anishhs-gh/mailts/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/@mailts/core"><img src="https://img.shields.io/npm/v/@mailts/core?color=0ea5e9&label=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/@mailts/core"><img src="https://img.shields.io/npm/dm/@mailts/core?color=0ea5e9" alt="npm downloads"></a>
+  <img src="https://img.shields.io/badge/types-included-3178c6?logo=typescript&logoColor=white" alt="TypeScript types included">
+  <img src="https://img.shields.io/badge/dependencies-0-22c55e" alt="zero dependencies">
+  <img src="https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white" alt="Node.js 22+">
+  <a href="LICENSE"><img src="https://img.shields.io/npm/l/@mailts/core?color=64748b" alt="MIT license"></a>
+</p>
+
+<p>
+  <a href="https://mailts.anishhs.com"><strong>Documentation</strong></a> ·
+  <a href="#-quick-start">Quick start</a> ·
+  <a href="#examples">Examples</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="MIGRATION.md">Upgrading from 0.4</a>
+</p>
+
+</div>
+
+> [!TIP]
+> **mailts 1.0 is here** — the first stable release: OAuth for Google and Microsoft, one mailbox API across IMAP / Gmail / Microsoft Graph, an IMAP connection pool, smart inbox content and a stable, fully documented API. See the [changelog](CHANGELOG.md) and [what changed from 0.4](MIGRATION.md).
+
+---
+
+## ✨ Why mailts
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 📤 Send
+SMTP with pooling, STARTTLS and DKIM — or one line to switch to **Resend, SendGrid, Mailgun, Postmark, SES, Gmail API or Microsoft Graph**. Attachments, inline images, calendar invites, replies and forwards.
+
+</td>
+<td width="33%" valign="top">
+
+### 📥 Read
+A byte-exact IMAP client: full MIME parsing, search, flags, move, drafts, `watch()` for new mail — plus **one `Mailbox` API** that works the same on IMAP, Gmail and Graph.
+
+</td>
+<td width="33%" valign="top">
+
+### 🔐 Sign in
+**Google and Microsoft OAuth** built in: browser sign-in for CLIs, web flows for backends, token refresh with rotation, service accounts and app-only access.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### ⏱️ Queue
+Priorities, retries with backoff, scheduled sends, rate limits, idempotency keys and a dead-letter queue. Crash-safe on SQLite, or any backend — Redis, Postgres — through `MailWorker`.
+
+</td>
+<td valign="top">
+
+### 🛡️ Safe by default
+TLS before login, header and command injection blocked, local file attachments off unless allowed, response size limits, credentials redacted from logs.
+
+</td>
+<td valign="top">
+
+### 🪄 Smart inbox
+Gmail order and tracking cards, inbox buttons and Promotions badges (schema.org), **AMP for Email**, Outlook Actionable Messages — plus OTP and BIMI guides.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🏢 Multi-tenant ready
+`ImapPool` reuses logged-in sessions per account, the queue scales across instances on Postgres, and every API is typed for servers that act on many mailboxes.
+
+</td>
+<td valign="top">
+
+### 📈 Observable
+Structured log streams with full protocol traces, telemetry hooks, health checks for liveness probes and typed, retry-aware errors.
+
+</td>
+<td valign="top">
+
+### 🧩 Ecosystem
+[`@mailts/trap`](packages/trap) catches mail locally with a web UI, [`@mailts/testing`](packages/testing) gives Vitest helpers and [`@mailts/cli`](packages/cli) sends, reads, manages queues and installs an **AI agent skill** (`mailts skill install`).
+
+</td>
+</tr>
+</table>
+
+---
+
+<details>
+<summary><strong>Full feature list</strong></summary>
+
 
 - **Native SMTP** — STARTTLS (required before AUTH by default), AUTH PLAIN / LOGIN / XOAUTH2, PIPELINING, SMTPUTF8, partial-recipient reporting, connection pool
 - **Native IMAP** — byte-exact protocol parser, automatic mailbox selection and reconnection, full MIME parsing (multipart, inline attachments, forwarded messages, RFC 2231/2047, charset-aware), BODYSTRUCTURE selective fetch, search (incl. non-ASCII), MOVE/COPY/APPEND, CONDSTORE, `watch()` push by UID, special-use mailboxes, internationalised mailbox names, per-account connection pool (`ImapPool`) for multi-tenant servers
@@ -31,9 +127,17 @@ Requires Node.js 22+ (SQLite queue persistence needs 22.13+). Stable since 1.0 �
 - **Security** — sealed `Credential` value object, encoded/validated headers (no injection via subjects, names, filenames or content types), IMAP/SMTP command-injection guards, `requireTLS`, local file attachments off by default (`attachmentPolicy`), prototype-pollution-safe config parser
 - **Zero runtime deps** — only `node:net`, `node:tls`, `node:crypto`, `node:stream`, `node:http`, `node:https`
 
+</details>
+
 ---
 
-## Quick start
+## 🚀 Quick start
+
+```bash
+npm install @mailts/core
+```
+
+Requires Node.js 22+ (the SQLite queue needs 22.13+). Fully typed — every option and method has an editor tooltip.
 
 ```ts
 import { MailTs } from '@mailts/core';
@@ -53,12 +157,114 @@ const result = await mail.send({
   text: 'Sent with mailts!',
 });
 
-if (result.ok) {
-  console.log('Delivered:', result.messageId);
-} else {
-  console.error('Failed:', result.error.message);
-}
+if (result.ok) console.log('Delivered:', result.messageId);
+else console.error('Failed:', result.error.message, '— retryable:', result.error.retryable);
 ```
+
+`send()` never throws for delivery problems — it returns a result you can branch on.
+
+<details>
+<summary><strong>📥 Read your inbox</strong></summary>
+
+```ts
+const mail = new MailTs({ imap: { host: 'imap.gmail.com', auth: { type: 'plain', user, pass } } });
+
+const session = mail.imap;
+const unread = await session.fetch({ seen: false, limit: 10, bodies: true }); // never marks mail as read
+for (const msg of unread) console.log(msg.envelope.subject, msg.body?.text?.slice(0, 80));
+
+const watcher = await session.watch('INBOX');
+watcher.on('new', (uids) => console.log('new mail:', uids));
+```
+
+</details>
+
+<details>
+<summary><strong>🔐 Sign in with Google or Microsoft (OAuth)</strong></summary>
+
+```ts
+import { authorizeWithLoopback, google, googleTokenProvider, mailConfigFor } from '@mailts/core/oauth';
+
+// Opens the browser, receives the redirect on 127.0.0.1, exchanges the code with PKCE
+const tokens = await authorizeWithLoopback({ provider: google, clientId, clientSecret });
+
+const getToken = googleTokenProvider({ clientId, clientSecret, refreshToken: tokens.refreshToken! });
+const mail = new MailTs(mailConfigFor(google, { user: tokens.email!, getToken })); // IMAP + SMTP, auto-refresh
+```
+
+</details>
+
+<details>
+<summary><strong>⏱️ Queue with retries and priorities</strong></summary>
+
+```ts
+const mail = new MailTs({ smtp, queue: { concurrency: 5, maxRetries: 3, persist: true } }); // crash-safe SQLite
+
+mail.queue.enqueue(
+  { from: 'app@example.com', to: 'vip@example.com', subject: 'Welcome', text: 'Hi!' },
+  { priority: 'critical', idempotencyKey: 'welcome:42' },   // a retried request never sends twice
+);
+await mail.shutdown(); // delivers (or keeps) pending mail — never drops it
+```
+
+</details>
+
+<details>
+<summary><strong>🌐 Send through an API instead of SMTP</strong></summary>
+
+```ts
+import { ResendTransport, GmailTransport } from '@mailts/core/transports';
+
+const mail = new MailTs({ transport: new ResendTransport({ apiKey: process.env.RESEND_API_KEY! }) });
+// or: new GmailTransport({ user, getToken }) — works where SMTP is blocked
+```
+
+</details>
+
+---
+
+## 📚 Contents
+
+<table>
+<tr>
+<td valign="top">
+
+**Basics**
+- [Configuration](#configuration)
+- [Sending mail](#sending-mail)
+- [Smart inbox features](#smart-inbox-features)
+- [OAuth](#oauth-google--microsoft)
+
+</td>
+<td valign="top">
+
+**Reading**
+- [IMAP](#imap)
+- [Watching for new mail](#watching-for-new-mail)
+- [Connection pool](#connection-pool-multi-tenant-servers)
+- [One mailbox API](#one-mailbox-api-imap-microsoft-graph-gmail-api)
+
+</td>
+<td valign="top">
+
+**Delivery**
+- [HTTP transports](#http-transports)
+- [Queue](#queue)
+- [MailWorker](#mailworker--external-queue--lifecycle-control)
+- [DKIM](#dkim-signing) · [Proxy](#proxy-support)
+
+</td>
+<td valign="top">
+
+**Production**
+- [Security](#security-for-untrusted-input)
+- [Errors](#errors) · [Health](#health-checks)
+- [Telemetry](#telemetry-hooks) · [Logs](#streaming-logs)
+- [Stability & versioning](#stability--versioning)
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -68,11 +274,14 @@ if (result.ok) {
 
 ```ts
 new MailTs({
-  smtp: SmtpConfig,    // SMTP transport
-  imap: ImapConfig,    // IMAP reader
-  queue: QueueOptions, // Send queue behaviour
-  logger: LoggerOptions,
-  devMode: boolean,    // Log but never transmit (useful in dev/CI)
+  smtp: SmtpConfig,                       // SMTP server (pooled by default)
+  imap: ImapConfig,                       // IMAP server for reading
+  transport: Transport,                   // send through an HTTP API instead of SMTP
+  queue: QueueOptions,                    // retries, priorities, rate limits, persistence
+  attachmentPolicy: 'deny' | 'allow' | { root }, // local file attachments (unset = rejected)
+  logger: LoggerOptions,                  // level, format, protocol trace
+  telemetry: TelemetryHooks,              // metrics / alerting callbacks
+  devMode: boolean,                       // log but never transmit (dev / CI)
 })
 ```
 
@@ -322,81 +531,6 @@ v=BIMI1; l=https://example.com/bimi/logo.svg; a=https://example.com/bimi/vmc.pem
 
 ---
 
-## HTTP transports
-
-For API-based delivery services, use a transport instead of SMTP:
-
-```ts
-import { ResendTransport } from '@mailts/core/transports';
-
-const mail = new MailTs({
-  transport: new ResendTransport({ apiKey: process.env.RESEND_API_KEY }),
-});
-```
-
-Available transports:
-
-| Transport | Import |
-|---|---|
-| Resend | `ResendTransport` |
-| SendGrid | `SendGridTransport` |
-| Mailgun | `MailgunTransport` |
-| Postmark | `PostmarkTransport` |
-| Amazon SES (HTTP) | `SesTransport` |
-| Microsoft Graph | `GraphTransport` |
-| Gmail API | `GmailTransport` |
-
-All transports implement the same `Transport` interface, so you can swap them without changing your send code.
-Provider errors are `TransportError`s: 408/429/5xx are retryable (the queue waits for `Retry-After`), 401/403 are
-`EAUTH`, other 4xx `EREJECT`. JSON-API transports forward threading and unsubscribe headers.
-
-**Graph and Gmail API** send the MIME mailts built (attachments, threading, DKIM-independent headers intact) using
-an OAuth `getToken` provider — useful when a Microsoft 365 tenant disables SMTP AUTH, or for Gmail's higher quotas:
-
-```ts
-import { GraphTransport, GmailTransport } from '@mailts/core';
-import { microsoft, microsoftTokenProvider } from '@mailts/core/oauth';
-
-const getToken = microsoftTokenProvider({ provider: microsoft({ api: 'graph-send' }), clientId, refreshToken });
-const mail = new MailTs({ transport: new GraphTransport({ user: 'me@contoso.com', getToken }) });
-// Gmail: new GmailTransport({ user: 'me@gmail.com', getToken }) with a Gmail API scope
-```
-
-`GraphTransport` and `GraphMailbox` are **experimental** (tested against a mock Graph API, not yet a live tenant).
-
----
-
-## DKIM signing
-
-```ts
-const mail = new MailTs({
-  smtp: { ... },
-  dkim: {
-    domainName: 'example.com',
-    keySelector: 'mail',
-    privateKey: process.env.DKIM_PRIVATE_KEY,
-    // headerFieldNames: ['from','to','subject','date','message-id'], // optional override
-  },
-});
-
-// Every outbound message is automatically signed
-await mail.send({ ... });
-```
-
-Or sign a raw buffer directly:
-
-```ts
-import { signDkim } from '@mailts/core';
-
-const signed = signDkim(rawBuffer, {
-  domainName: 'example.com',
-  keySelector: 'mail',
-  privateKey: privateKeyPem,
-});
-```
-
----
-
 ## OAuth (Google & Microsoft)
 
 Password login is disabled for most Microsoft 365 tenants and discouraged by Google. Use XOAUTH2 with a
@@ -424,7 +558,7 @@ import { authorizeWithLoopback, microsoft, microsoftTokenProvider } from '@mailt
 const tokens = await authorizeWithLoopback({
   provider: microsoft(),                       // tenant: 'common' | 'organizations' | 'consumers' | <id>
   clientId: process.env.MS_CLIENT_ID!,
-  onAuthUrl: (url) => process.stderr.write(`Open ${url}\n`),   // also opens the browser by default
+  onAuthUrl: (url) => { process.stderr.write(`Open ${url}\n`); },   // also opens the browser by default
 });
 await keychain.set('refresh-token', tokens.refreshToken!);
 
@@ -762,9 +896,10 @@ const boxes: Mailbox[] = [
 
 for (const box of boxes) {
   const unread = await box.fetch({ search: { seen: false, from: 'boss@x.com' }, limit: 10 });
-  const [first] = await box.fetch({ ids: [unread[0].id], bodies: true });   // text, html, attachments
-  await box.setSeen([first.id], true);
-  await box.move([first.id], 'Archive');
+  if (!unread.length) continue;
+  const [first] = await box.fetch({ ids: [unread[0]!.id], bodies: true });   // text, html, attachments
+  await box.setSeen([first!.id], true);
+  await box.move([first!.id], 'Archive');
   await box.append('Drafts', (await mail.build(reply)).raw, { draft: true });
   const watcher = await box.watch('INBOX');
   watcher.on('new', (ids) => { /* … */ });
@@ -775,6 +910,50 @@ Ids are strings (IMAP UID, Graph id, Gmail id); flags use IMAP names (`\Seen`, `
 names like `INBOX`, `Sent`, `Drafts`, `Trash` resolve per provider (Gmail mailboxes are labels).
 Provider limits: Graph `append()` creates drafts only; Graph and Gmail `watch()` poll (Graph receive time, Gmail
 history) — push needs a public webhook / Pub/Sub topic.
+
+---
+
+## HTTP transports
+
+For API-based delivery services, use a transport instead of SMTP:
+
+```ts
+import { ResendTransport } from '@mailts/core/transports';
+
+const mail = new MailTs({
+  transport: new ResendTransport({ apiKey: process.env.RESEND_API_KEY! }),
+});
+```
+
+Available transports:
+
+| Transport | Import |
+|---|---|
+| Resend | `ResendTransport` |
+| SendGrid | `SendGridTransport` |
+| Mailgun | `MailgunTransport` |
+| Postmark | `PostmarkTransport` |
+| Amazon SES (HTTP) | `SesTransport` |
+| Microsoft Graph | `GraphTransport` |
+| Gmail API | `GmailTransport` |
+
+All transports implement the same `Transport` interface, so you can swap them without changing your send code.
+Provider errors are `TransportError`s: 408/429/5xx are retryable (the queue waits for `Retry-After`), 401/403 are
+`EAUTH`, other 4xx `EREJECT`. JSON-API transports forward threading and unsubscribe headers.
+
+**Graph and Gmail API** send the MIME mailts built (attachments, threading, DKIM-independent headers intact) using
+an OAuth `getToken` provider — useful when a Microsoft 365 tenant disables SMTP AUTH, or for Gmail's higher quotas:
+
+```ts
+import { GraphTransport, GmailTransport } from '@mailts/core';
+import { microsoft, microsoftTokenProvider } from '@mailts/core/oauth';
+
+const getToken = microsoftTokenProvider({ provider: microsoft({ api: 'graph-send' }), clientId, refreshToken });
+const mail = new MailTs({ transport: new GraphTransport({ user: 'me@contoso.com', getToken }) });
+// Gmail: new GmailTransport({ user: 'me@gmail.com', getToken }) with a Gmail API scope
+```
+
+`GraphTransport` and `GraphMailbox` are **experimental** (tested against a mock Graph API, not yet a live tenant).
 
 ---
 
@@ -963,77 +1142,64 @@ Complete drivers: [`mail-worker-redis.ts`](examples/mail-worker-redis.ts) (Redis
 
 ---
 
-## Streaming logs
+## Security for untrusted input
+
+Attachments given by local `path` are **rejected unless you set `attachmentPolicy`**, so a message built from
+untrusted input (AI agents, web forms) cannot attach `/etc/passwd` or `.env`. Pass `content` (Buffer/string) instead,
+or opt in:
 
 ```ts
-import { createWriteStream } from 'fs';
-
 const mail = new MailTs({
-  smtp: { ... },
-  logger: {
-    level: 'debug',
-    format: 'pretty',
-    protocol: true,  // include raw SMTP/IMAP protocol lines
+  smtp,
+  attachmentPolicy: { root: '/srv/uploads' },  // only files inside root — symlinks resolved, escapes rejected
+  // attachmentPolicy: 'allow',                 // any path — trusted code only (scripts, CLIs)
+});
+// requireTLS defaults to true when authenticating (loopback hosts exempt); SMTP and IMAP
+// refuse to send credentials if STARTTLS is missing.
+```
+
+The same policy applies to `mail.build()`, `saveToSent()`, `session.appendMessage()` and `ImapPool`. mailts never
+fetches URLs, so attachment SSRF is not possible through it.
+
+Header values, filenames, content types, IMAP flags, sequence sets and all addresses (From/To/Cc/Bcc/Reply-To)
+are encoded or validated — malformed input is rejected with `MimeError` instead of being written to the wire.
+
+**Hostile servers and messages:** IMAP responses are size-limited while they arrive (`imap.limits`: 64 MiB per
+literal, 128 MiB per response, 1 MiB per line — exceeding one fails the command with `LimitError` and closes the
+connection); `parseMessage(raw, { maxParts, maxHeaderBytes, maxDepth })` truncates (`truncated: true`) instead of
+exhausting memory; SMTP replies are capped. TLS defaults to `minVersion: 'TLSv1.2'` (override via `tls`).
+
+---
+
+## DKIM signing
+
+```ts
+const mail = new MailTs({
+  smtp: {
+    host: 'smtp.example.com',
+    auth: { type: 'plain', user, pass },
+    dkim: {
+      domainName: 'example.com',
+      keySelector: 'mail',                 // DNS TXT at mail._domainkey.example.com
+      privateKey: process.env.DKIM_PRIVATE_KEY,
+      // headerFieldNames: ['from','to','subject','date','message-id'], // optional override
+    },
   },
 });
 
-// Event listener
-mail.logger.onEvent((e) => {
-  if (e.level === 'error') process.stderr.write(e.message + '\n');
-});
-
-// Pipe to a file as newline-delimited JSON
-mail.logger.stream({ format: 'json' }).pipe(createWriteStream('/tmp/mail.log'));
-
-// Pretty-print to stdout
-mail.logger.stream({ format: 'pretty' }).pipe(process.stdout);
+// Every outbound message is automatically signed
+await mail.send({ ... });
 ```
 
-All `AUTH` credentials are automatically scrubbed from the protocol trace before they reach any log sink.
-
----
-
-## Aliases & templates
-
-### Define a reusable alias
+Or sign a raw buffer directly:
 
 ```ts
-mail.define('welcome', {
-  from: { email: 'welcome@example.com', name: 'Acme Team' },
-  subject: 'Welcome, {{name}}!',
-  template: 'Hi {{name}},\n\nYour account is ready.',
-});
+import { signDkim } from '@mailts/core';
 
-await mail.trigger('welcome', {
-  to: 'newuser@example.com',
-  data: { name: 'Alice' },
-});
-```
-
-### Built-in template syntax
-
-The built-in engine supports `{{variable}}` and dotted paths (`{{user.name}}`). Missing variables resolve to empty string.
-
-### Custom template engine
-
-```ts
-import Handlebars from 'handlebars';
-
-mail.setTemplateEngine({
-  compile: (source) => Handlebars.compile(source),
-  render:  (compiled, data) => (compiled as HandlebarsTemplateDelegate)(data),
-});
-```
-
----
-
-## Middleware
-
-```ts
-// Runs before every send — can mutate EmailOptions
-mail.use(async (msg, next) => {
-  msg.headers = { ...msg.headers, 'X-Mailer': 'myapp/1.0' };
-  await next();
+const signed = signDkim(rawBuffer, {
+  domainName: 'example.com',
+  keySelector: 'mail',
+  privateKey: privateKeyPem,
 });
 ```
 
@@ -1044,14 +1210,16 @@ mail.use(async (msg, next) => {
 By default mailts keeps a pool of persistent SMTP connections for reuse across sends. Call `shutdown()` before process exit to drain the pool cleanly.
 
 ```ts
-smtp: {
-  host: 'smtp.example.com',
-  pool: {
-    maxConnections: 5,   // max simultaneous connections
-    maxMessages: 100,    // recycle connection after N messages
-    idleTimeout: 60_000, // close idle connections after 60 s
+const mail = new MailTs({
+  smtp: {
+    host: 'smtp.example.com',
+    pool: {
+      maxConnections: 5,   // max simultaneous connections
+      maxMessages: 100,    // recycle connection after N messages
+      idleTimeout: 60_000, // close idle connections after 60 s
+    },
   },
-}
+});
 ```
 
 **Disable pooling** for scripts and CLIs — a fresh connection is opened and closed per send, so the process exits naturally with no `shutdown()` required:
@@ -1079,35 +1247,6 @@ const mail = new MailTs({
   },
 });
 ```
-
----
-
-## Security for untrusted input
-
-Attachments given by local `path` are **rejected unless you set `attachmentPolicy`**, so a message built from
-untrusted input (AI agents, web forms) cannot attach `/etc/passwd` or `.env`. Pass `content` (Buffer/string) instead,
-or opt in:
-
-```ts
-const mail = new MailTs({
-  smtp,
-  attachmentPolicy: { root: '/srv/uploads' },  // only files inside root — symlinks resolved, escapes rejected
-  // attachmentPolicy: 'allow',                 // any path — trusted code only (scripts, CLIs)
-});
-// requireTLS defaults to true when authenticating (loopback hosts exempt); SMTP and IMAP
-// refuse to send credentials if STARTTLS is missing.
-```
-
-The same policy applies to `mail.build()`, `saveToSent()`, `session.appendMessage()` and `ImapPool`. mailts never
-fetches URLs, so attachment SSRF is not possible through it.
-
-Header values, filenames, content types, IMAP flags, sequence sets and all addresses (From/To/Cc/Bcc/Reply-To)
-are encoded or validated — malformed input is rejected with `MimeError` instead of being written to the wire.
-
-**Hostile servers and messages:** IMAP responses are size-limited while they arrive (`imap.limits`: 64 MiB per
-literal, 128 MiB per response, 1 MiB per line — exceeding one fails the command with `LimitError` and closes the
-connection); `parseMessage(raw, { maxParts, maxHeaderBytes, maxDepth })` truncates (`truncated: true`) instead of
-exhausting memory; SMTP replies are capped. TLS defaults to `minVersion: 'TLSv1.2'` (override via `tls`).
 
 ---
 
@@ -1193,6 +1332,82 @@ All hooks are optional and fire synchronously after the event. Throwing inside a
 
 ---
 
+## Streaming logs
+
+```ts
+import { createWriteStream } from 'fs';
+
+const mail = new MailTs({
+  smtp: { ... },
+  logger: {
+    level: 'debug',
+    format: 'pretty',
+    protocol: true,  // include raw SMTP/IMAP protocol lines
+  },
+});
+
+// Event listener
+mail.logger.onEvent((e) => {
+  if (e.level === 'error') process.stderr.write(e.message + '\n');
+});
+
+// Pipe to a file as newline-delimited JSON
+mail.logger.stream({ format: 'json' }).pipe(createWriteStream('/tmp/mail.log'));
+
+// Pretty-print to stdout
+mail.logger.stream({ format: 'pretty' }).pipe(process.stdout);
+```
+
+All `AUTH` credentials are automatically scrubbed from the protocol trace before they reach any log sink.
+
+---
+
+## Aliases & templates
+
+### Define a reusable alias
+
+```ts
+mail.define('welcome', {
+  from: { email: 'welcome@example.com', name: 'Acme Team' },
+  subject: 'Welcome, {{name}}!',
+  template: 'Hi {{name}},\n\nYour account is ready.',
+});
+
+await mail.trigger('welcome', {
+  to: 'newuser@example.com',
+  data: { name: 'Alice' },
+});
+```
+
+### Built-in template syntax
+
+The built-in engine supports `{{variable}}` and dotted paths (`{{user.name}}`). Missing variables resolve to empty string.
+
+### Custom template engine
+
+```ts
+import Handlebars from 'handlebars';
+
+mail.setTemplateEngine({
+  compile: (source) => Handlebars.compile(source),
+  render:  (compiled, data) => (compiled as HandlebarsTemplateDelegate)(data),
+});
+```
+
+---
+
+## Middleware
+
+```ts
+// Runs before every send — can mutate EmailOptions
+mail.use(async (msg, next) => {
+  msg.headers = { ...msg.headers, 'X-Mailer': 'myapp/1.0' };
+  await next();
+});
+```
+
+---
+
 ## Dev mode
 
 ```ts
@@ -1262,9 +1477,9 @@ Runnable examples live in [`examples/`](examples) (run with `npx tsx examples/<f
 
 | Package | Description |
 |---|---|
-| [`@mailts/cli`](https://github.com/anishhs-gh/mailts/tree/main/packages/cli) | Terminal CLI — send mail, verify SMTP connections, manage the queue and DLQ from the command line |
-| [`@mailts/trap`](https://github.com/anishhs-gh/mailts/tree/main/packages/trap) | Local SMTP trap — captures outbound emails in development and previews them in a web UI at `localhost:1080` |
-| [`@mailts/testing`](https://github.com/anishhs-gh/mailts/tree/main/packages/testing) | Vitest helpers — `useTrapServer()` spins up a real in-process SMTP trap for integration tests, no mocks |
+| [`@mailts/cli`](https://github.com/anishhs-gh/mailts/tree/master/packages/cli) | Terminal CLI — send mail, verify SMTP connections, manage the queue and DLQ, install the mailts skill for AI coding agents |
+| [`@mailts/trap`](https://github.com/anishhs-gh/mailts/tree/master/packages/trap) | Local SMTP trap — captures outbound emails in development and previews them in a web UI at `localhost:1080` |
+| [`@mailts/testing`](https://github.com/anishhs-gh/mailts/tree/master/packages/testing) | Vitest helpers — `useTrapServer()` spins up a real in-process SMTP trap for integration tests, no mocks |
 
 ### Quick example with `@mailts/trap`
 
@@ -1286,14 +1501,14 @@ await mail.send({ from: 'app@example.com', to: 'dev@example.com', subject: 'Test
 import { useTrapServer } from '@mailts/testing';
 import { MailTs } from '@mailts/core';
 
-const { getTrap } = useTrapServer();
+const trap = useTrapServer({ smtpPort: 2025 });   // real in-process SMTP trap for this suite
 
 test('sends welcome email', async () => {
-  const mail = new MailTs({ smtp: { host: '127.0.0.1', port: getTrap().smtpPort, pool: false } });
+  const mail = new MailTs({ smtp: { host: '127.0.0.1', port: 2025, pool: false } });
   await mail.send({ from: 'app@example.com', to: 'alice@example.com', subject: 'Welcome!', text: 'Hi' });
 
-  const [msg] = getTrap().store.getAll();
-  expect(msg!.subject).toBe('Welcome!');
+  const msg = await trap.waitForMessage({ subject: 'Welcome!' });
+  expect(msg.to[0]!.email).toBe('alice@example.com');
 });
 ```
 
@@ -1308,16 +1523,22 @@ mailts test --host smtp.gmail.com       # verify connection
 mailts send --to you@example.com --subject "Hi" --text "Hello"
 mailts read --unseen --limit 5
 mailts queue status
+mailts skill install                    # teach your AI coding agent (Claude Code) to use mailts
 ```
 
 ---
 
-## Author
+## 🤝 Contributing
 
-**Anish Shekh** — [github.com/anishhs-gh](https://github.com/anishhs-gh)
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup, coding standards, tests
+(`npm test`, `npm run test:integration`) and the release process.
 
 ---
 
-## License
+<div align="center">
 
-MIT
+**[Documentation](https://mailts.anishhs.com)** · **[npm](https://www.npmjs.com/package/@mailts/core)** · **[Issues](https://github.com/anishhs-gh/mailts/issues)**
+
+Built by [Anish Shekh](https://github.com/anishhs-gh) · [MIT License](LICENSE)
+
+</div>

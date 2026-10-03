@@ -6,6 +6,7 @@ import { readMail } from './commands/read.js';
 import { configureSMTP } from './commands/configure.js';
 import { queueCommand } from './commands/queue.js';
 import { trapCommand } from './commands/trap.js';
+import { skillCommand } from './commands/skill.js';
 import { printError } from './prompt.js';
 
 declare const __CLI_VERSION__: string | undefined;
@@ -27,6 +28,7 @@ COMMANDS
   read [options]                Read emails via IMAP
   queue <subcommand>            Manage the send queue
   trap [options]                Start a local SMTP trap server (requires @mailts/trap)
+  skill <subcommand>            Install the mailts skill for AI coding agents (Claude Code)
   version                       Print version and exit
 
 CONFIGURE OPTIONS
@@ -63,6 +65,15 @@ QUEUE SUBCOMMANDS
   queue dlq list [--json]       List jobs in the dead-letter queue
   queue dlq retry <job-id>      Re-enqueue a dead-letter job
 
+SKILL SUBCOMMANDS
+  skill install                 Copy the skill to ./.claude/skills/mailts (this project)
+  skill install --global        Copy it to ~/.claude/skills/mailts (every project)
+  skill install --dir <path>    Copy it to <path>/mailts (other agents / layouts)
+  skill uninstall               Remove a skill installed by mailts (same options)
+  skill show                    Print SKILL.md
+  skill path                    Print where install would write
+  --force                       Replace or remove a folder mailts did not create
+
 TRAP OPTIONS
   --smtp-port <port>            SMTP listen port  (default: 1025)
   --http-port <port>            HTTP/UI listen port  (default: 1080)
@@ -87,6 +98,8 @@ EXAMPLES
   mailts queue status
   mailts queue dlq list
   mailts queue dlq retry a1b2c3d4e5f6
+  mailts skill install
+  mailts skill install --global
 `;
 
 async function main(): Promise<void> {
@@ -213,6 +226,27 @@ async function main(): Promise<void> {
       case 'trap':
         await trapCommand(rest);
         break;
+
+      case 'skill': {
+        const { values, positionals } = parseArgs({
+          args: rest,
+          options: {
+            global: { type: 'boolean' },
+            dir:    { type: 'string' },
+            force:  { type: 'boolean' },
+          },
+          strict: false,
+          allowPositionals: true,
+        });
+        skillCommand({
+          subcommand: positionals[0],
+          global:  values['global'] as boolean | undefined,
+          dir:     values['dir'] as string | undefined,
+          force:   values['force'] as boolean | undefined,
+          version: VERSION,
+        });
+        break;
+      }
 
       default:
         printError(`Unknown command: "${command}"`);

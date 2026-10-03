@@ -29,6 +29,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Agent skill matches README
+        run: npm run skill:build -- --check
+
       - name: Audit
         run: npm audit --audit-level=high --omit=dev
 

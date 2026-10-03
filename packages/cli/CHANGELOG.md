@@ -14,6 +14,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 - `mailts send` always shuts the client down (also on the alias path and on errors), so the process exits instead of holding SMTP connections.
 
 ### Added
+- `mailts skill install | uninstall | show | path` — installs the mailts agent skill (`SKILL.md` + reference files covering sending, reading, OAuth, queues and production) into `./.claude/skills/mailts`, `~/.claude/skills/mailts` (`--global`) or any directory (`--dir`). Updates in place; never overwrites a folder it did not create without `--force`.
 - `mailts queue status` shows a `Scheduled` row (retries waiting for backoff and `sendAt` jobs) (`@mailts/core` 1.0+).
 
 ## [0.1.6] — 2026-05-12

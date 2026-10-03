@@ -13,6 +13,7 @@
   },
   "files": [
     "dist",
+    "skill",
     "cli.mjs",
     "README.md",
     "LICENSE"
@@ -54,7 +55,9 @@
     "email-cli",
     "transactional",
     "trap",
-    "queue"
+    "queue",
+    "claude-code",
+    "agent-skill"
   ],
   "repository": {
     "type": "git",
