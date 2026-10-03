@@ -7,7 +7,8 @@
  *   • cancel()             — discard a pending or running job
  *   • interrupt()          — return a running job to the front of the queue
  *   • abort()              — force-fail a running job (retry / DLQ apply)
- *   • shutdown()           — graceful stop with optional timeout
+ *   • shutdown()           — graceful stop: drain / keep / cancel pending jobs
+ *   • sendAt               — scheduled sends
  *
  * Run:  npx tsx examples/queue-lifecycle.ts
  */
@@ -165,9 +166,11 @@ console.log('\n─── 5. abort() ──────────────�
 }
 
 // ── 6. shutdown() ─────────────────────────────────────────────────────────────
+// Default: an in-memory queue DELIVERS pending jobs before stopping (a persistent
+// queue keeps them for the next start). Nothing is discarded unless you ask.
 
 console.log('\n─── 6. shutdown() ────────────────────────────────────────────────────────\n');
-{
+for (const pending of ['drain', 'cancel'] as const) {
   const mail = new MailTs({
     queue: { concurrency: 2, maxRetries: 0 },
     logger: { level: 'warn' },
@@ -179,13 +182,29 @@ console.log('\n─── 6. shutdown() ─────────────�
 
   mail.queue.enqueue({ to: 'a@example.com', subject: 'A', text: '...' });
   mail.queue.enqueue({ to: 'b@example.com', subject: 'B', text: '...' });
-  mail.queue.enqueue({ to: 'c@example.com', subject: 'C', text: '...' }); // will be cancelled
+  mail.queue.enqueue({ to: 'c@example.com', subject: 'C', text: '...' }); // waits for a free slot
 
-  await new Promise(r => setTimeout(r, 10)); // let a and b start running
+  await new Promise(r => setTimeout(r, 10)); // let A and B start
 
-  await mail.queue.shutdown(); // cancels c, waits for a and b
-  console.log('Final stats:', mail.queue.stats());
-  // → { pending: 0, running: 0, succeeded: 2, dead: 0, cancelled: 1 }
+  const result = await mail.queue.shutdown({ pending, timeoutMs: 5_000 });
+  console.log(`shutdown({ pending: '${pending}' }) →`, result, mail.queue.stats());
+  // drain  → { cancelled: 0, remaining: 0 } — A, B and C all sent
+  // cancel → { cancelled: 1, remaining: 0 } — C discarded, A and B finish
+}
+
+// ── 7. Scheduled sends ────────────────────────────────────────────────────────
+
+console.log('\n─── 7. sendAt ────────────────────────────────────────────────────────────\n');
+{
+  const mail = new MailTs({ logger: { level: 'warn' } });
+  mail.queue.setSendFn(fakeSend);
+  const job = mail.queue.enqueue(
+    { to: 'later@example.com', subject: 'In 200 ms', text: '...' },
+    { sendAt: new Date(Date.now() + 200) },
+  );
+  console.log(`Job ${job.id} is ${job.status} until ${job.notBefore?.toISOString()}`);
+  await mail.queue.drain();
+  console.log('Scheduled job sent. Stats:', mail.queue.stats());
 }
 
 // ── Cross-process control (Node 22+ with queue.persist) ────────────────────────

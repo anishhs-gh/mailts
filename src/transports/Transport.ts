@@ -1,10 +1,18 @@
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
 
+/** What a transport reports after handing a message over. */
 export interface TransportResult {
+  /** Message-ID (or the provider's id when it replaces it). */
   messageId: string;
+  /** Recipients the provider accepted. */
   accepted: string[];
+  /** Recipients the provider refused. */
   rejected: string[];
+  /** Provider-specific id (e.g. Gmail message id), when it differs from the Message-ID. */
+  providerMessageId?: string;
+  /** Provider thread id, when the provider reports one (Gmail). */
+  threadId?: string;
 }
 
 /** Common interface all transports must implement. */

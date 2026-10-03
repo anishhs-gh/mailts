@@ -29,6 +29,7 @@ export class SmtpPool extends EventEmitter {
   private idleTimers: Map<SmtpClient, ReturnType<typeof setTimeout>> = new Map();
   private closing = false;
 
+  /** The configuration this pool was created with. */
   readonly config: SmtpConfig;
   private readonly logger: Logger | null;
   private readonly maxConnections: number;
@@ -88,13 +89,17 @@ export class SmtpPool extends EventEmitter {
 
     // Wait for a connection to become available
     return new Promise((resolve, reject) => {
-      const slot: WaitingSlot = { resolve, reject };
-      this.waiting.push(slot);
-      signal?.addEventListener('abort', () => {
+      const onAbort = (): void => {
         const idx = this.waiting.indexOf(slot);
         if (idx !== -1) this.waiting.splice(idx, 1);
         reject(new SmtpConnError('Pool acquire aborted'));
-      }, { once: true });
+      };
+      const slot: WaitingSlot = {
+        resolve: (c) => { signal?.removeEventListener('abort', onAbort); resolve(c); },
+        reject: (e) => { signal?.removeEventListener('abort', onAbort); reject(e); },
+      };
+      this.waiting.push(slot);
+      signal?.addEventListener('abort', onAbort, { once: true });
     });
   }
 
@@ -105,7 +110,19 @@ export class SmtpPool extends EventEmitter {
    */
   release(client: SmtpClient): void {
     const entry = this.entries.find(e => e.client === client);
-    if (!entry) return;
+    if (!entry) {
+      this.dispatchWaiting();
+      return;
+    }
+
+    // Never hand out a broken connection (aborted, failed RSET, closed by server)
+    if (!client.isReady) {
+      this.logger?.debug('smtp', 'Pool: discarding unhealthy connection');
+      this.removeClient(client);
+      client.destroy();
+      this.dispatchWaiting();
+      return;
+    }
 
     // Retire connection if it has hit max messages
     if (client.messageCount >= this.maxMessages) {
@@ -132,6 +149,7 @@ export class SmtpPool extends EventEmitter {
       this.removeClient(client);
       client.quit().catch(() => {});
     }, this.idleTimeout);
+    timer.unref?.();
     this.idleTimers.set(client, timer);
   }
 
@@ -187,14 +205,16 @@ export class SmtpPool extends EventEmitter {
 
     await Promise.all(quits);
 
-    // Wait for in-use connections to finish
+    // Wait for in-use connections to finish, then close them
     await new Promise<void>(resolve => {
       const check = () => {
         if (this.entries.every(e => !e.inUse)) resolve();
-        else setTimeout(check, 100);
+        else setTimeout(check, 50);
       };
       check();
     });
+    await Promise.all(this.entries.map(e => e.client.quit().catch(() => {})));
+    for (const c of [...this.idleTimers.keys()]) this.clearIdleTimer(c);
 
     this.entries = [];
     this.emit('drained');

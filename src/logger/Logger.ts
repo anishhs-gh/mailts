@@ -54,6 +54,7 @@ function formatRaw(e: LogEvent): string {
 export class Logger extends EventEmitter {
   private minLevel: number;
   private format: LogFormat;
+  /** `true` when protocol tracing (`LoggerOptions.protocol`) is on. */
   readonly protocol: boolean;
   private streams: Readable[] = [];
 

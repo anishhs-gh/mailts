@@ -1,6 +1,8 @@
 import { SmtpPool } from '../smtp/SmtpPool.js';
-import { SmtpClient } from '../smtp/SmtpClient.js';
-import { buildMessage } from './Message.js';
+import { SmtpClient, type SmtpSendResult } from '../smtp/SmtpClient.js';
+import { buildMessage, type BuiltMessage } from './Message.js';
+import { applyRichContent } from './RichContent.js';
+import { resolveAttachment, type AttachmentPathPolicy } from './Attachment.js';
 import { signDkim } from './Dkim.js';
 import { TemplateRenderer } from './Template.js';
 import { MailQueue } from '../queue/MailQueue.js';
@@ -13,7 +15,7 @@ import type { HealthResult } from '../health/HealthChecker.js';
 import type { TelemetryHooks } from '../telemetry/index.js';
 import type { SmtpConfig } from '../types/smtp.js';
 import type { ImapConfig } from '../types/imap.js';
-import type { QueueOptions } from '../types/queue.js';
+import type { QueueOptions, ShutdownOptions, ShutdownResult } from '../types/queue.js';
 import type { LoggerOptions } from '../types/logger.js';
 import type {
   EmailOptions,
@@ -24,7 +26,7 @@ import type {
   Middleware,
 } from '../types/core.js';
 import type { Transport } from '../transports/Transport.js';
-import { ConfigError, MailTsError } from '../errors.js';
+import { ConfigError, MailTsError, ImapError } from '../errors.js';
 
 /** Top-level configuration passed to `new MailTs()` or `.configure()`. */
 export interface MailTsConfig {
@@ -55,6 +57,24 @@ export interface MailTsConfig {
   transport?: Transport;
   /** Telemetry hooks for observability — wired to send and queue events. */
   telemetry?: TelemetryHooks;
+  /**
+   * Policy for attachments given by filesystem `path`. Unset rejects them (same as
+   * `'deny'`). Use `{ root }` to allow one directory, or `'allow'` only when every
+   * message comes from trusted code — never for untrusted input such as AI agents.
+   */
+  attachmentPolicy?: AttachmentPathPolicy;
+}
+
+/** Per-call options for `send()`. */
+export interface SendCallOptions {
+  /**
+   * After a successful send, APPEND the exact sent bytes to the Sent mailbox
+   * via IMAP (`true` = auto-detect with SPECIAL-USE, or a mailbox name).
+   * Gmail stores sent mail itself — leave this off there.
+   */
+  saveToSent?: boolean | string;
+  /** Abort the send. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -89,6 +109,9 @@ export class MailTs {
   private devMode = false;
   private queueOpts: QueueOptions = {};
   private hooks: TelemetryHooks = {};
+  private attachmentPolicy: AttachmentPathPolicy | undefined;
+  private sentSession: ImapSession | null = null;
+  private sentMailbox: string | null = null;
 
   /**
    * Structured logger — subscribe via `logger.onEvent(fn)` or stream via
@@ -128,29 +151,46 @@ export class MailTs {
       this.transportOverride = config.transport;
     }
 
+    if (config.attachmentPolicy) this.attachmentPolicy = config.attachmentPolicy;
+
     if (config.smtp) {
+      const oldPool = this.pool;
       this.smtpConfig = config.smtp;
       this.poolingDisabled = config.smtp.pool === false;
       this.pool = this.poolingDisabled ? null : new SmtpPool(config.smtp, this.logger);
+      if (oldPool) void oldPool.drain().catch(() => {});
     }
 
     if (config.imap) {
       this.imapConfig = config.imap;
+      const old = this.sentSession;
+      this.sentSession = null;
+      this.sentMailbox = null;
+      if (old) void old.close().catch(() => {});
     }
 
     if (config.telemetry) this.hooks = config.telemetry;
 
     if (config.queue !== undefined) {
+      const old = this._queue;
+      if (old) {
+        const st = old.stats();
+        if (st.pending + st.running + st.scheduled > 0 && !old.persistent) {
+          throw new ConfigError('Cannot replace the queue while it has unsent jobs — drain or shut it down first');
+        }
+        if (old instanceof SqliteQueue) old.close();
+      }
       this.queueOpts = config.queue;
       this.rebuildQueue();
     }
   }
 
   private rebuildQueue(): void {
+    const sendFn = (opts: EmailOptions, signal?: AbortSignal) => this.sendQueued(opts, signal);
     let q: MailQueue;
     if (this.queueOpts.persist) {
       try {
-        q = new SqliteQueue(resolveQueueDbPath(this.queueOpts.persist), this.queueOpts, this.logger);
+        q = new SqliteQueue(resolveQueueDbPath(this.queueOpts.persist), this.queueOpts, this.logger, sendFn);
       } catch (err) {
         this.logger.warn('queue', `SqliteQueue failed, falling back to MailQueue: ${err instanceof Error ? err.message : String(err)}`);
         q = new MailQueue(this.queueOpts, this.logger);
@@ -158,14 +198,15 @@ export class MailTs {
     } else {
       q = new MailQueue(this.queueOpts, this.logger);
     }
-    q.setSendFn((opts, signal) => this.sendDirect(opts, signal));
+    q.setSendFn(sendFn);
 
-    if (this.hooks.onQueueEnqueue)     q.on('enqueued',    this.hooks.onQueueEnqueue);
-    if (this.hooks.onQueueSuccess)     q.on('success',     this.hooks.onQueueSuccess);
-    if (this.hooks.onQueueDead)        q.on('dead',        this.hooks.onQueueDead);
-    if (this.hooks.onQueueRetry)       q.on('retry',       (job, attempt, delay) => this.hooks.onQueueRetry!(job, attempt, delay));
-    if (this.hooks.onQueueCancelled)   q.on('cancelled',   this.hooks.onQueueCancelled);
-    if (this.hooks.onQueueInterrupted) q.on('interrupted', this.hooks.onQueueInterrupted);
+    // Hooks are looked up at event time so later `configure({ telemetry })` calls apply
+    q.on('enqueued',    job => this.hooks.onQueueEnqueue?.(job));
+    q.on('success',     job => this.hooks.onQueueSuccess?.(job));
+    q.on('dead',        job => this.hooks.onQueueDead?.(job));
+    q.on('retry',       (job, attempt, delay) => this.hooks.onQueueRetry?.(job, attempt, delay));
+    q.on('cancelled',   job => this.hooks.onQueueCancelled?.(job));
+    q.on('interrupted', job => this.hooks.onQueueInterrupted?.(job));
 
     this._queue = q;
   }
@@ -292,13 +333,89 @@ export class MailTs {
    * Returns a discriminated-union `SendResult` — check `result.ok` before
    * accessing `result.messageId`.
    */
-  async send(options: EmailOptions): Promise<SendResult> {
-    if (this.devMode) {
-      this.logger.info('core', `[devMode] Would send email to ${JSON.stringify(options.to)}`);
-      this.logger.debug('core', '[devMode] Full options logged at debug level');
-      return { ok: true, messageId: `dev-${Date.now()}@local`, accepted: [], rejected: [] };
-    }
+  async send(options: EmailOptions, callOpts: SendCallOptions = {}): Promise<SendResult> {
+    if (this.devMode) return this.devResult(options);
+    const prepared = await this.runMiddleware(options);
+    const result = await this.sendDirect(prepared, callOpts.signal, callOpts.saveToSent);
+    return result;
+  }
 
+  /**
+   * The queue's send path: honours `devMode` and runs middleware on a fresh copy
+   * of the job's options for every attempt (so mutations never accumulate
+   * across retries). Used by `mail.queue` and `MailWorker`.
+   */
+  async sendQueued(options: EmailOptions, signal?: AbortSignal): Promise<SendResult> {
+    if (this.devMode) return this.devResult(options);
+    try {
+      const prepared = await this.runMiddleware(copyOptions(options));
+      return await this.sendDirect(prepared, signal);
+    } catch (err) {
+      return { ok: false, error: toMailError(err), attempts: 1 };
+    }
+  }
+
+  /**
+   * Send immediately — bypasses middleware and `devMode`, threads `signal` to
+   * the transport. For advanced callers that manage their own pipeline.
+   */
+  dispatch(options: EmailOptions, signal?: AbortSignal): Promise<SendResult> {
+    return this.sendDirect(options, signal);
+  }
+
+  /**
+   * Build the exact RFC 5322 bytes `send()` would transmit (DKIM-signed when
+   * configured) without sending. Use it for IMAP APPEND (drafts), previews or tests.
+   */
+  async build(options: EmailOptions): Promise<BuiltMessage> {
+    const built = await buildMessage(options, { attachmentPolicy: this.attachmentPolicy });
+    const raw = this.smtpConfig?.dkim ? signDkim(built.raw, this.smtpConfig.dkim) : built.raw;
+    return { ...built, raw };
+  }
+
+  /**
+   * APPEND a message to the Sent mailbox over IMAP (`\\Seen`). Many providers
+   * (unlike Gmail) do not store SMTP-sent mail. `mailbox` defaults to the
+   * SPECIAL-USE `\\Sent` mailbox (falling back to common names).
+   */
+  async saveToSent(
+    message: EmailOptions | BuiltMessage | Buffer,
+    opts: { mailbox?: string } = {},
+  ): Promise<{ mailbox: string; uid?: number }> {
+    const raw = Buffer.isBuffer(message) ? message : 'raw' in message ? message.raw : (await this.build(message)).raw;
+    const session = this.sentImap();
+    const mailbox = opts.mailbox ?? (this.sentMailbox ??= await session.findMailbox('\\Sent') ?? null);
+    if (!mailbox) throw new ImapError('No Sent mailbox found — pass { mailbox } explicitly');
+    const res = await session.append(mailbox, raw, ['\\Seen']);
+    return { mailbox, uid: res.uid };
+  }
+
+  /**
+   * HTTP transports read attachments from `options`; resolve `path` entries here,
+   * under the attachment policy, so transports never touch the filesystem.
+   */
+  private async materializePaths(options: EmailOptions): Promise<EmailOptions> {
+    if (!options.attachments?.some(a => a.path !== undefined && a.content === undefined)) return options;
+    const attachments = await Promise.all(options.attachments.map(async (a) => {
+      if (a.path === undefined || a.content !== undefined || a.rfc822 !== undefined) return a;
+      const r = await resolveAttachment(a, this.attachmentPolicy);
+      const { path: _path, ...rest } = a;
+      return { ...rest, filename: r.filename, contentType: r.contentType, content: await r.getContent() };
+    }));
+    return { ...options, attachments };
+  }
+
+  private sentImap(): ImapSession {
+    if (!this.imapConfig) throw new ConfigError('IMAP not configured — saveToSent needs imap config');
+    return (this.sentSession ??= new ImapSession(this.imapConfig, this.logger, { attachmentPolicy: this.attachmentPolicy }));
+  }
+
+  private devResult(options: EmailOptions): SendResult {
+    this.logger.info('core', `[devMode] Would send email to ${JSON.stringify(options.to)}`);
+    return { ok: true, messageId: `<dev-${Date.now()}@local>`, accepted: [], rejected: [] };
+  }
+
+  private async runMiddleware(options: EmailOptions): Promise<EmailOptions> {
     let index = 0;
     const next = async (): Promise<void> => {
       if (index < this.middlewares.length) {
@@ -307,74 +424,89 @@ export class MailTs {
       }
     };
     await next();
-
-    return this.sendDirect(options);
+    return options;
   }
 
-  /**
-   * Send immediately — bypasses the internal queue and threads `signal` directly
-   * to the transport layer. Middleware is **not** run. Used by `MailWorker`
-   * and available for advanced callers that manage their own concurrency.
-   */
-  dispatch(options: EmailOptions, signal?: AbortSignal): Promise<SendResult> {
-    return this.sendDirect(options, signal);
-  }
-
-  private async sendDirect(options: EmailOptions, signal?: AbortSignal): Promise<SendResult> {
+  private async sendDirect(
+    options: EmailOptions,
+    signal?: AbortSignal,
+    saveToSent?: boolean | string,
+  ): Promise<SendResult> {
     const t0 = Date.now();
     try {
-      const built = await buildMessage(options);
-      const raw = this.smtpConfig?.dkim ? signDkim(built.raw, this.smtpConfig.dkim) : built.raw;
-      const message = { ...built, raw };
-
-      let result: SendResult;
+      // Render structured data into html once, so MIME and JSON-API transports carry the same body.
+      options = applyRichContent(options);
+      const message = await this.build(options);
+      let result: SendResult & { ok: true };
 
       if (this.transportOverride) {
         const transport = this.transportOverride;
-        this.logger.debug('core', `Sending via ${transport.name} (${raw.length} bytes)`);
-        const r = await transport.send(message, options, signal);
+        this.logger.debug('core', `Sending via ${transport.name} (${message.raw.length} bytes)`);
+        const r = await transport.send(message, await this.materializePaths(options), signal);
         this.logger.info('core', `Message sent (${r.messageId})`);
         result = { ok: true, messageId: r.messageId, accepted: r.accepted, rejected: r.rejected };
-      } else if (this.poolingDisabled) {
-        const client = new SmtpClient(this.requireSmtpConfig(), this.logger);
-        await client.connect();
-        const onAbort = (): void => { client.destroy(); };
-        signal?.addEventListener('abort', onAbort, { once: true });
-        try {
-          this.logger.debug('smtp', `Sending message (${raw.length} bytes) to ${built.to.join(', ')}`);
-          const serverId = await client.sendMessage(built.from, built.to, raw);
-          this.logger.info('smtp', `Message sent (${built.messageId}) — server id: ${serverId}`);
-          result = { ok: true, messageId: built.messageId, accepted: built.to, rejected: [] };
-        } finally {
-          signal?.removeEventListener('abort', onAbort);
-          await client.quit().catch(() => {});
-        }
       } else {
-        const pool = this.requireSmtp();
-        const client = await pool.acquire(signal);
-        const onAbort = (): void => { client.destroy(); };
-        signal?.addEventListener('abort', onAbort, { once: true });
+        const r = await this.sendSmtp(message, signal);
+        if (r.rejected.length) {
+          this.logger.warn('smtp', `Recipients rejected: ${r.rejected.join(', ')}`);
+        }
+        this.logger.info('smtp', `Message sent (${message.messageId})${r.serverId ? ` — server id: ${r.serverId}` : ''}`);
+        result = { ok: true, messageId: message.messageId, accepted: r.accepted, rejected: r.rejected };
+      }
+
+      if (saveToSent) {
         try {
-          this.logger.debug('smtp', `Sending message (${raw.length} bytes) to ${built.to.join(', ')}`);
-          const serverId = await client.sendMessage(built.from, built.to, raw);
-          this.logger.info('smtp', `Message sent (${built.messageId}) — server id: ${serverId}`);
-          result = { ok: true, messageId: built.messageId, accepted: built.to, rejected: [] };
-        } finally {
-          signal?.removeEventListener('abort', onAbort);
-          pool.release(client);
+          await this.saveToSent(message, typeof saveToSent === 'string' ? { mailbox: saveToSent } : {});
+        } catch (err) {
+          // The mail was delivered — report, don't fail the send
+          this.logger.warn('imap', `saveToSent failed: ${err instanceof Error ? err.message : String(err)}`);
+          this.hooks.onError?.(err instanceof Error ? err : new Error(String(err)), 'saveToSent');
         }
       }
 
       this.hooks.onSend?.(options, result, Date.now() - t0);
       return result;
     } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err));
-      this.logger.error('core', `Send failed: ${e.message}`);
-      this.hooks.onError?.(e, 'send');
-      const mailErr = err instanceof MailTsError
-        ? err
-        : new MailTsError(e.message, 'ECONN', true);
+      const mailErr = toMailError(err);
+      this.logger.error('core', `Send failed: ${mailErr.message}`);
+      this.hooks.onError?.(mailErr, 'send');
       return { ok: false, error: mailErr, attempts: 1 };
+    }
+  }
+
+  private async sendSmtp(message: BuiltMessage, signal?: AbortSignal): Promise<SmtpSendResult> {
+    const cfg = this.requireSmtpConfig();
+    const opts = {
+      eightBit: message.requires8BitMime,
+      smtpUtf8: message.requiresSmtpUtf8,
+      allRecipientsRequired: cfg.allRecipientsRequired,
+    };
+    if (signal?.aborted) throw new MailTsError('Send aborted', 'EQUEUE', true);
+
+    if (this.poolingDisabled) {
+      const client = new SmtpClient(cfg, this.logger);
+      const onAbort = (): void => { client.destroy(); };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        await client.connect();
+        this.logger.debug('smtp', `Sending message (${message.raw.length} bytes) to ${message.to.join(', ')}`);
+        return await client.send(message.from, message.to, message.raw, opts);
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
+        await client.quit().catch(() => {});
+      }
+    }
+
+    const pool = this.requireSmtp();
+    const client = await pool.acquire(signal);
+    const onAbort = (): void => { client.destroy(); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      this.logger.debug('smtp', `Sending message (${message.raw.length} bytes) to ${message.to.join(', ')}`);
+      return await client.send(message.from, message.to, message.raw, opts);
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+      pool.release(client);
     }
   }
 
@@ -474,6 +606,11 @@ export class MailTs {
     return this._queue!;
   }
 
+  /** `true` once the queue has been created (by access or `queue` config). */
+  get hasQueue(): boolean {
+    return this._queue !== null;
+  }
+
   // ─── IMAP ─────────────────────────────────────────────────────────────────
 
   /**
@@ -493,7 +630,7 @@ export class MailTs {
     if (!this.imapConfig) {
       throw new ConfigError('IMAP not configured. Pass imap config to configure() or constructor.');
     }
-    return new ImapSession(this.imapConfig, this.logger);
+    return new ImapSession(this.imapConfig, this.logger, { attachmentPolicy: this.attachmentPolicy });
   }
 
   // ─── Health ───────────────────────────────────────────────────────────────
@@ -507,17 +644,45 @@ export class MailTs {
   // ─── Graceful shutdown ────────────────────────────────────────────────────
 
   /**
-   * Gracefully drain the queue and close all pooled SMTP connections.
-   * Await this before process exit to ensure in-flight messages are delivered.
+   * Stop the queue, close pooled SMTP connections and the internal IMAP session.
+   *
+   * Pending mail is **not** discarded by default: an in-memory queue is drained
+   * (delivered), a persistent queue keeps unsent jobs for the next start. Pass
+   * `{ pending: 'cancel' }` to discard, and `timeoutMs` to bound the wait.
+   * A number is accepted as the legacy `shutdown(queueTimeoutMs)` form.
    */
-  /**
-   * Gracefully drain the queue and close all pooled SMTP connections.
-   * Await this before process exit to ensure in-flight messages are delivered.
-   * @param queueTimeoutMs - If provided, running queue jobs are aborted after this many ms.
-   */
-  async shutdown(queueTimeoutMs?: number): Promise<void> {
-    if (this._queue) await this._queue.shutdown(queueTimeoutMs);
+  async shutdown(opts: number | ShutdownOptions = {}): Promise<ShutdownResult | undefined> {
+    const result = this._queue ? await this._queue.shutdown(opts) : undefined;
     if (this.pool) await this.pool.drain();
+    const session = this.sentSession;
+    this.sentSession = null;
+    if (session) await session.close().catch(() => {});
     this.logger.info('core', 'MailTs shutdown complete');
+    return result;
   }
+}
+
+/** Shallow-copy options (and their mutable containers) so middleware edits stay per-attempt. */
+function copyOptions(o: EmailOptions): EmailOptions {
+  return {
+    ...o,
+    ...(o.headers ? { headers: { ...o.headers } } : {}),
+    ...(o.attachments ? { attachments: o.attachments.map(a => ({ ...a })) } : {}),
+    ...(Array.isArray(o.to) ? { to: [...o.to] } : {}),
+    ...(Array.isArray(o.cc) ? { cc: [...o.cc] } : {}),
+    ...(Array.isArray(o.bcc) ? { bcc: [...o.bcc] } : {}),
+  };
+}
+
+const NETWORK_CODES = /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|ENOTFOUND)$/;
+
+/** Wrap unknown errors: network failures are retryable, programming/validation errors are not. */
+function toMailError(err: unknown): MailTsError {
+  if (err instanceof MailTsError) return err;
+  const e = err instanceof Error ? err : new Error(String(err));
+  const code = (e as { code?: unknown }).code;
+  const network = typeof code === 'string' && NETWORK_CODES.test(code);
+  const wrapped = new MailTsError(e.message, network ? 'ECONN' : 'EQUEUE', network);
+  (wrapped as { cause?: unknown }).cause = e;
+  return wrapped;
 }

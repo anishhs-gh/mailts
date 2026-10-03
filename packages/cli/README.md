@@ -140,6 +140,31 @@ Once running, open `http://localhost:1080` to inspect captured mail. The trap al
 
 > `mailts read` connects to IMAP and cannot read from the trap server.
 
+### `skill`
+
+Install the **mailts agent skill** so AI coding agents (Claude Code and others that read the
+Agent Skills `SKILL.md` format) know how to use `@mailts/core`:
+the rules that prevent common bugs, the main recipes, and a full reference for sending, reading, OAuth,
+queues and production use. It loads only when a task involves email, so it costs nothing otherwise.
+
+```bash
+mailts skill install                 # ./.claude/skills/mailts — this project (commit it to share)
+mailts skill install --global        # ~/.claude/skills/mailts — every project
+mailts skill install --dir <path>    # <path>/mailts — other agents or layouts
+mailts skill uninstall               # remove it (same options)
+mailts skill show                    # print SKILL.md
+mailts skill path                    # where install writes
+```
+
+| Option | Description |
+|---|---|
+| `--global` | Install into `~/.claude/skills` instead of the current project |
+| `--dir <path>` | Install into `<path>/mailts` |
+| `--force` | Replace or remove a folder that `mailts skill` did not create |
+
+Re-running `install` updates the skill to the CLI's version. A folder that wasn't created by `mailts skill`
+is never overwritten or removed without `--force`.
+
 ## Config files
 
 Auto-loaded from two locations (merged in order, local wins):
@@ -199,14 +224,17 @@ mailts queue dlq retry <job-id>
 # Start a local SMTP trap (requires @mailts/trap)
 mailts trap
 mailts trap --smtp-port 2525 --http-port 8080 --no-open
+
+# Teach your AI coding agent mailts
+mailts skill install
 ```
 
 ## Peer dependencies
 
 | Package | Version | Required |
 |---------|---------|----------|
-| `@mailts/core` | `>=0.1.0` | Yes |
-| `@mailts/trap` | `>=0.1.0` | No — only needed for `mailts trap` |
+| `@mailts/core` | `>=1.0.0 <2.0.0` | Yes |
+| `@mailts/trap` | `>=1.1.0 <2.0.0` | No — only needed for `mailts trap` |
 
 ---
 

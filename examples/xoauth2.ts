@@ -1,72 +1,57 @@
 /**
- * OAuth2 / XOAUTH2 authentication — Gmail SMTP and IMAP.
+ * OAuth2 / XOAUTH2 — Gmail (or Microsoft 365) SMTP + IMAP with automatic token refresh.
  *
- * Unlike app passwords, OAuth2 tokens are short-lived (1 hour) and scoped.
- * Pass the access_token you get from Google's token endpoint as `token`.
+ * Access tokens expire after ~1 hour. Give mailts a `getToken` provider instead of a
+ * static token: it is called on every (re)connect and again with `invalid: true` if the
+ * server rejects a token, so long-running apps keep working.
  *
- * Prerequisites:
- *   1. Create OAuth2 credentials at console.cloud.google.com
- *   2. Grant scope: https://mail.google.com/
- *   3. Exchange your auth code for tokens (access_token + refresh_token)
- *   4. Refresh when expired: POST https://oauth2.googleapis.com/token
+ * Get a refresh token once with `examples/oauth-cli.ts signin`, then:
  *
- * Run:  GMAIL_USER=you@gmail.com GMAIL_TOKEN=<access_token> npx tsx examples/xoauth2.ts
+ * Run:
+ *   GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… GOOGLE_REFRESH_TOKEN=… MAIL_USER=you@gmail.com \
+ *     npx tsx examples/xoauth2.ts
  */
 import { MailTs } from '../src/index.js';
+import { google, googleTokenProvider, mailConfigFor } from '../src/oauth/index.js';
 
-const user  = process.env['GMAIL_USER']!;
-const token = process.env['GMAIL_TOKEN']!;
-
-if (!user || !token) {
-  console.error('Set GMAIL_USER and GMAIL_TOKEN env vars');
+const user = process.env['MAIL_USER'];
+const clientId = process.env['GOOGLE_CLIENT_ID'];
+const clientSecret = process.env['GOOGLE_CLIENT_SECRET'];
+const refreshToken = process.env['GOOGLE_REFRESH_TOKEN'];
+if (!user || !clientId || !clientSecret || !refreshToken) {
+  console.error('Set MAIL_USER, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN');
   process.exit(1);
 }
 
-// ── SMTP with XOAUTH2 ─────────────────────────────────────────────────────
-const mail = new MailTs({
-  smtp: {
-    host: 'smtp.gmail.com',
-    port: 587,
-    auth: {
-      type: 'xoauth2',
-      user,
-      token,   // `pass` is ignored for xoauth2
-    },
-    pool: false,   // one-shot send, no shutdown() needed
-  },
-  logger: { level: 'info', format: 'pretty' },
+// Caches the access token, refreshes ~60 s before expiry, one request per burst.
+const getToken = googleTokenProvider({
+  clientId,
+  clientSecret,
+  refreshToken,
+  onRefreshToken: () => { /* Google keeps refresh tokens stable; Microsoft rotates — persist it there */ },
 });
 
+// imap.gmail.com:993 + smtp.gmail.com:465 with auth: { type: 'xoauth2', user, getToken }
+const config = mailConfigFor(google, { user, getToken });
+const mail = new MailTs({ ...config, smtp: { ...config.smtp, pool: false } });
+
+// ── SMTP ──────────────────────────────────────────────────────────────────
 const result = await mail.send({
   from: { email: user, name: 'My App' },
-  to: 'recipient@example.com',
+  to: user,
   subject: 'Sent via OAuth2',
-  text: 'No app password — just a short-lived OAuth2 access token.',
-  html: '<p>No app password — just a short-lived OAuth2 access token.</p>',
+  text: 'No app password — a refreshed OAuth2 access token.',
 });
-console.log('SMTP XOAUTH2:', result.ok ? result.messageId : result.error.message);
+console.log('SMTP:', result.ok ? result.messageId : result.error.message);
 
-// ── IMAP with XOAUTH2 ─────────────────────────────────────────────────────
-const reader = new MailTs({
-  imap: {
-    host: 'imap.gmail.com',
-    port: 993,
-    secure: true,
-    auth: { type: 'xoauth2', user, token },
-  },
-});
-
-const session = reader.imap;
-await session.connect();
-
-const mailboxes = await session.listMailboxes();
-console.log('Mailboxes:', mailboxes.map(b => b.name).join(', '));
-
+// ── IMAP ──────────────────────────────────────────────────────────────────
+const session = mail.imap;
 const status = await session.open('INBOX');
 console.log(`INBOX: ${status.exists} messages, ${status.unseen} unseen`);
 
-const messages = await session.fetch({ seen: false, limit: 5 });
-console.log(`Unread: ${messages.map(m => m.envelope.subject).join(', ')}`);
+const unread = await session.fetch({ seen: false, limit: 5 });
+console.log('Unread:', unread.map(m => m.envelope.subject).join(' | ') || '(none)');
 await session.close();
 
-console.log('IMAP XOAUTH2: connected and listed inbox successfully');
+// A static token still works when you manage refresh yourself:
+//   auth: { type: 'xoauth2', user, token: accessToken }

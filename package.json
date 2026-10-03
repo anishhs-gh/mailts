@@ -1,6 +1,6 @@
 {
   "name": "@mailts/core",
-  "version": "0.4.0",
+  "version": "1.0.0",
   "description": "Modern native TypeScript SMTP/IMAP library — zero legacy deps, built to replace nodemailer",
   "license": "MIT",
   "author": {
@@ -41,15 +41,27 @@
       "types": "./dist/transports/index.d.ts",
       "import": "./dist/transports/index.js",
       "require": "./dist/transports/index.cjs"
+    },
+    "./oauth": {
+      "types": "./dist/oauth/index.d.ts",
+      "import": "./dist/oauth/index.js",
+      "require": "./dist/oauth/index.cjs"
+    },
+    "./mailbox": {
+      "types": "./dist/mailbox/index.d.ts",
+      "import": "./dist/mailbox/index.js",
+      "require": "./dist/mailbox/index.cjs"
     }
   },
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "MIGRATION.md",
+    "CHANGELOG.md"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "workspaces": [
     "packages/*"
@@ -62,11 +74,17 @@
     "test:core": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "typecheck": "tsc --noEmit && npm run typecheck --workspaces --if-present",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.examples.json && npm run typecheck --workspaces --if-present",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run build:core && npm run test:core"
+    "prepublishOnly": "npm run build:core && npm run test:core",
+    "test:integration": "MAILTS_IT=1 vitest run tests/integration",
+    "greenmail": "node scripts/greenmail.mjs",
+    "typecheck:examples": "tsc -p tsconfig.examples.json",
+    "skill:build": "node scripts/build-skill.mjs",
+    "example:oauth-web": "node --env-file=examples/.env node_modules/vite-node/vite-node.mjs examples/oauth-web-server.ts"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.16",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.0.0",
     "tsup": "^8.0.0",
@@ -91,7 +109,12 @@
     "mime",
     "attachments",
     "dkim",
-    "tls"
+    "tls",
+    "oauth",
+    "xoauth2",
+    "gmail",
+    "outlook",
+    "microsoft365"
   ],
   "repository": {
     "type": "git",

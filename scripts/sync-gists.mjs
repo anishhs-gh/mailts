@@ -5,12 +5,15 @@
  * Matches existing gists by description; creates if not found.
  *
  * Requires: GIST_TOKEN env var (PAT with `gist` scope)
+ *
+ *   node scripts/sync-gists.mjs --dry-run   # no token: check metadata and import rewriting only
  */
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
+const DRY_RUN = process.argv.includes('--dry-run');
 const TOKEN = process.env.GIST_TOKEN;
-if (!TOKEN) { console.error('GIST_TOKEN not set'); process.exit(1); }
+if (!TOKEN && !DRY_RUN) { console.error('GIST_TOKEN not set'); process.exit(1); }
 
 const EXAMPLES_DIR = new URL('../examples', import.meta.url).pathname;
 const REPO = 'https://github.com/anishhs-gh/mailts';
@@ -30,8 +33,8 @@ const META = {
     description: '@mailts/core — IMAP: list mailboxes, fetch unread messages, IDLE push | typescript email imap',
     title:       'IMAP: fetch unread messages and IDLE push',
     install:     'npm install @mailts/core',
-    run:         'IMAP_PASS=<app-password> npx tsx imap-read.ts',
-    features:    ['List all mailboxes', 'Open a mailbox and check counts', 'Fetch unread messages', 'IDLE push notifications for new mail'],
+    run:         'IMAP_USER=you@gmail.com IMAP_PASS=<app-password> npx tsx imap-read.ts',
+    features:    ['List mailboxes with special-use roles', 'Unseen count via open()', 'Full bodies without marking mail read', 'watch() — new mail by UID, auto-reconnect'],
   },
   'transports.ts': {
     description: '@mailts/core — Pluggable transports: Resend, SendGrid, Postmark, Mailgun, AWS SES | typescript email smtp',
@@ -100,8 +103,99 @@ const META = {
     description: '@mailts/core — OAuth2 / XOAUTH2 for Gmail SMTP and IMAP (no app password) | typescript email oauth2 gmail',
     title:       'OAuth2 / XOAUTH2 for Gmail SMTP and IMAP',
     install:     'npm install @mailts/core',
-    run:         'GMAIL_USER=you@gmail.com GMAIL_TOKEN=<access_token> npx tsx xoauth2.ts',
-    features:    ['XOAUTH2 SMTP authentication', 'XOAUTH2 IMAP authentication', 'Short-lived access tokens (no app password)', 'Works with Google Workspace + personal Gmail'],
+    run:         'MAIL_USER=you@gmail.com GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… GOOGLE_REFRESH_TOKEN=… npx tsx xoauth2.ts',
+    features:    ['XOAUTH2 for SMTP and IMAP', 'getToken provider — automatic refresh', 'mailConfigFor(google) presets', 'Works with Google Workspace + personal Gmail'],
+  },
+  'oauth-cli.ts': {
+    description: '@mailts/core — OAuth sign-in for CLIs: Gmail & Microsoft 365 via browser, PKCE, refresh | typescript email oauth2 gmail outlook',
+    title:       'OAuth for CLIs — Google & Microsoft sign-in, send, sign out',
+    install:     'npm install @mailts/core',
+    run:         'PROVIDER=google MAIL_USER=you@gmail.com GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… npx tsx oauth-cli.ts signin',
+    features:    ['authorizeWithLoopback() — browser sign-in with PKCE', 'Refresh-token storage and rotation', 'createTokenProvider() for SMTP/IMAP', 'Sign out with token revocation'],
+  },
+  'oauth-web-server.ts': {
+    description: '@mailts/core — "Connect your mailbox" web flow for Gmail & Microsoft 365 | typescript email oauth2 web',
+    title:       'OAuth web flow — connect Gmail / Microsoft 365 mailboxes',
+    install:     'npm install @mailts/core',
+    run:         'GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… MS_CLIENT_ID=… MS_CLIENT_SECRET=… npx tsx oauth-web-server.ts',
+    features:    ['buildAuthorizationUrl() + PKCE + state', 'exchangeCode() in the callback', 'Per-mailbox token providers', 'Works in any Node HTTP framework'],
+  },
+  'reply-and-save-to-sent.ts': {
+    description: '@mailts/core — reply in-thread, save to Sent, save drafts over IMAP | typescript email imap smtp',
+    title:       'Reply in-thread and save to Sent / Drafts',
+    install:     'npm install @mailts/core',
+    run:         'MAIL_USER=… MAIL_PASS=… IMAP_HOST=… SMTP_HOST=… npx tsx reply-and-save-to-sent.ts',
+    features:    ['inReplyTo / references threading', 'send(opts, { saveToSent: true })', 'findMailbox(\'\\\\Drafts\')', 'appendMessage() drafts'],
+  },
+  'parse-eml.ts': {
+    description: '@mailts/core — parse raw email / .eml files: bodies, attachments, headers | typescript email mime parser',
+    title:       'Parse raw email (.eml) with parseMessage()',
+    install:     'npm install @mailts/core',
+    run:         'npx tsx parse-eml.ts [file.eml]',
+    features:    ['multipart/alternative/related/mixed', 'RFC 2047 headers, RFC 2231 filenames', 'Inline (cid) and regular attachments', 'Nested forwarded messages'],
+  },
+  'untrusted-input.ts': {
+    description: '@mailts/core — safe sending for AI agents and web forms: attachmentPolicy, injection guards | typescript email security',
+    title:       'Sending from untrusted input (AI agents, forms)',
+    install:     'npm install @mailts/core',
+    run:         'npx tsx untrusted-input.ts',
+    features:    ['attachmentPolicy: deny / { root }', 'Header and SMTP injection rejected', 'requireTLS by default', 'Result-based error handling'],
+  },
+  'queue-persistence.ts': {
+    description: '@mailts/core — crash-safe SQLite email queue, exactly-once delivery after restart | typescript email queue sqlite',
+    title:       'Crash-safe persistent queue (SQLite)',
+    install:     'npm install @mailts/core',
+    run:         'npx tsx queue-persistence.ts enqueue && npx tsx queue-persistence.ts deliver',
+    features:    ['Jobs survive crashes, delivered once', 'Multi-process leases', 'shutdown() keeps unsent mail', 'Buffer attachments persisted'],
+  },
+  'imap-pool.ts': {
+    description: '@mailts/core — reuse IMAP connections per account in multi-tenant servers | typescript imap connection pool',
+    title:       'IMAP connection pool for multi-tenant servers',
+    install:     'npm install @mailts/core',
+    run:         'IMAP_USER=you@gmail.com IMAP_PASS=<app password> npx tsx imap-pool.ts',
+    features:    ['One authenticated session per account', 'Exclusive lease per request', 'Idle timeout and LRU eviction', 'close(account) on sign-out'],
+  },
+  'queue-driver-postgres.ts': {
+    description: '@mailts/core — durable email queue shared by many instances on Postgres (Cloud Run, Kubernetes) | typescript email queue postgres',
+    title:       'Multi-instance email queue on Postgres',
+    install:     'npm install @mailts/core pg',
+    run:         'DATABASE_URL=postgres://… SMTP_HOST=… SMTP_USER=… SMTP_PASS=… npx tsx queue-driver-postgres.ts',
+    features:    ['FOR UPDATE SKIP LOCKED — one instance per job', 'Leases recover jobs from crashed instances', 'Idempotency keys across instances', 'Graceful SIGTERM shutdown'],
+  },
+  'rich-inbox-email.ts': {
+    description: '@mailts/core — Gmail order & parcel cards, inbox actions, Promotions annotations, AMP for Email, Outlook Actionable Messages | typescript email schema.org json-ld amp',
+    title:       'Smart inbox email: schema.org, AMP and Adaptive Cards',
+    install:     'npm install @mailts/core',
+    run:         'SMTP_USER=you@gmail.com SMTP_PASS=<app password> npx tsx rich-inbox-email.ts',
+    features:    ['schemaOrg.order / parcelDelivery / reservations', 'viewAction inbox button', 'Promotions discountOffer + promotionCard', 'AMP part with html fallback', 'Outlook Adaptive Card'],
+  },
+  'otp-email.ts': {
+    description: '@mailts/core — one-time-code emails that Gmail, Apple Mail and Outlook recognise | typescript otp verification email',
+    title:       'OTP / verification code email',
+    install:     'npm install @mailts/core',
+    run:         'SMTP_USER=you@gmail.com SMTP_PASS=<app password> npx tsx otp-email.ts',
+    features:    ['Code in subject for client detection', 'Plain-text part', 'crypto.randomInt codes', 'Expiry stated'],
+  },
+  'oauth-app-only.ts': {
+    description: '@mailts/core — organisation-wide mailbox access: Google service account + Microsoft client credentials | typescript email oauth2 workspace',
+    title:       'App-only OAuth — Google Workspace / Microsoft 365 without user sign-in',
+    install:     'npm install @mailts/core',
+    run:         'GOOGLE_SA_KEY=./sa.json MAILBOX=support@company.com npx tsx oauth-app-only.ts google',
+    features:    ['Service account domain-wide delegation', 'Microsoft client credentials (secret / certificate)', 'Read and send as a shared mailbox'],
+  },
+  'mailbox-any-provider.ts': {
+    description: '@mailts/core — one mailbox API for IMAP, Microsoft Graph and Gmail API | typescript email imap graph gmail',
+    title:       'One Mailbox API for IMAP, Microsoft Graph and Gmail',
+    install:     'npm install @mailts/core',
+    run:         'PROVIDER=gmail MAIL_USER=… GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… GOOGLE_REFRESH_TOKEN=… npx tsx mailbox-any-provider.ts',
+    features:    ['Provider-neutral fetch / search / flags / move / drafts', 'watch() for new mail', 'Graph and Gmail API without IMAP'],
+  },
+  'newsletter-unsubscribe.ts': {
+    description: '@mailts/core — bulk email: one-click unsubscribe (RFC 8058), rate limits, idempotency | typescript email newsletter',
+    title:       'Newsletter sending: one-click unsubscribe, rate limits, idempotency',
+    install:     'npm install @mailts/core',
+    run:         'npx tsx newsletter-unsubscribe.ts',
+    features:    ['List-Unsubscribe + one-click POST', 'Queue rate limiting', 'Idempotency keys — never email twice'],
   },
   'imap-manage.ts': {
     description: '@mailts/core — IMAP management: flags, copy, move, delete, append, CONDSTORE | typescript email imap',
@@ -143,35 +237,33 @@ const META = {
     title:       'Queue lifecycle: priority, pause, cancel, interrupt, abort',
     install:     'npm install @mailts/core',
     run:         'npx tsx queue-lifecycle.ts',
-    features:    ['Priority scheduling (critical → high → normal → low)', 'pause() / play() — stop and restart the queue', 'cancel(jobId) — remove permanently, no retry', 'interrupt(jobId) — requeue at front, attempt counter unchanged', 'abort(jobId) — force-fail, retry/DLQ applies', 'shutdown(timeoutMs) — graceful drain with abort timeout'],
+    features:    ['Priority scheduling (critical → high → normal → low)', 'pause() / play() — stop and restart the queue', 'cancel(jobId) — remove permanently, no retry', 'interrupt(jobId) — requeue at front, attempt counter unchanged', 'abort(jobId) — force-fail, retry/DLQ applies', 'shutdown({ pending: drain | keep | cancel }) — never drops mail by default', 'sendAt — scheduled sends'],
   },
   'mail-worker-redis.ts': {
     description: '@mailts/core — MailWorker + Redis: external queue persistence with full lifecycle control | typescript email queue redis',
     title:       'MailWorker + Redis: external persistence, full lifecycle control',
     install:     'npm install @mailts/core ioredis',
     run:         'REDIS_URL=redis://localhost:6379 SMTP_PASS=<pass> npx tsx mail-worker-redis.ts',
-    features:    ['QueueDriver interface — dequeue / ack / nack', 'Redis BRPOPLPUSH reliable queue pattern (survives crash)', 'MailWorker bridges external persistence with MailQueue lifecycle', 'pause() — stops pulling from Redis AND stops queue execution', 'resume() — restarts both consumer loop and queue', 'Graceful shutdown with SIGTERM handler'],
+    features:    ['QueueDriver interface — dequeue / ack / nack', 'Redis BRPOPLPUSH reliable queue pattern (survives crash)', 'MailWorker bridges external persistence with MailQueue lifecycle', 'pause() — stops pulling from Redis AND stops queue execution', 'resume() — restarts both consumer loop and queue', 'release() — hand unstarted messages back on shutdown', 'encodeOptions / decodeOptions keep attachments intact', 'prefetch backpressure'],
   },
 };
 
 // ── Import rewriting ─────────────────────────────────────────────────────────
 
-const LOCAL_IMPORTS = [
-  /from '\.\.\/src\/index\.js'/g,
-  /from '\.\.\/src\/types\/index\.js'/g,
-  /from '\.\.\/src\/types\/core\.js'/g,
-  /from '\.\.\/src\/errors\.js'/g,
-  /from '\.\.\/src\/transports\/index\.js'/g,
-  /from '\.\.\/src\/transports\/Transport\.js'/g,
-];
+// Package subpaths published by @mailts/core (package.json "exports").
+const SUBPATHS = ['smtp', 'imap', 'queue', 'logger', 'transports', 'oauth', 'mailbox'];
 
-const DYNAMIC_IMPORT = /await import\('\.\.\/src\/errors\.js'\)/g;
+/** '../src/…' → the published import ('@mailts/core' or '@mailts/core/<subpath>'). */
+function packageSpecifier(rel) {
+  const m = /^\.\.\/src\/([a-z]+)\/index\.js$/.exec(rel);
+  if (m && SUBPATHS.includes(m[1])) return `@mailts/core/${m[1]}`;
+  return '@mailts/core';   // src/index.js, types, errors, single files re-exported from the root
+}
 
 function rewriteImports(src) {
-  let out = src;
-  for (const re of LOCAL_IMPORTS) out = out.replace(re, "from '@mailts/core'");
-  out = out.replace(DYNAMIC_IMPORT, "await import('@mailts/core')");
-  return out;
+  return src
+    .replace(/from '(\.\.\/src\/[^']+)'/g, (_, rel) => `from '${packageSpecifier(rel)}'`)
+    .replace(/import\('(\.\.\/src\/[^']+)'\)/g, (_, rel) => `import('${packageSpecifier(rel)}')`);
 }
 
 // ── Install hint injection ───────────────────────────────────────────────────
@@ -263,6 +355,19 @@ async function upsertGist(id, description, filename, tsContent, readmeContent) {
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 const files = readdirSync(EXAMPLES_DIR).filter(f => f.endsWith('.ts'));
+
+if (DRY_RUN) {
+  let problems = 0;
+  for (const file of files) {
+    if (!META[file]) { console.error(`  missing metadata: ${file}`); problems++; continue; }
+    const out = rewriteImports(readFileSync(join(EXAMPLES_DIR, file), 'utf8'));
+    const left = out.match(/from '\.\.?\/[^']*'|import\('\.\.?\/[^']*'\)/g);
+    if (left) { console.error(`  unresolved local import in ${file}: ${left.join(', ')}`); problems++; }
+  }
+  console.log(`${files.length} examples checked, ${problems} problem(s)`);
+  process.exit(problems ? 1 : 0);
+}
+
 const existing = await fetchExisting();
 
 let created = 0, updated = 0, skipped = 0;

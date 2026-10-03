@@ -32,7 +32,8 @@ export async function sendEmail(args: SendArgs): Promise<void> {
     return;
   }
 
-  const mail = new MailTs({ smtp: smtpConfig, logger: { level: 'info', format: 'pretty' } });
+  // --attachments names local files the user chose, so reading paths is intended here.
+  const mail = new MailTs({ smtp: smtpConfig, attachmentPolicy: 'allow', logger: { level: 'info', format: 'pretty' } });
 
   if (args.alias) {
     const aliases = (globalCfg['aliases'] as Record<string, unknown> | undefined) ?? {};
@@ -40,9 +41,13 @@ export async function sendEmail(args: SendArgs): Promise<void> {
     if (!aliasConfig) { printError(`Alias "${args.alias}" not found in config`); process.exitCode = 1; return; }
     mail.define(args.alias, aliasConfig as object);
     printInfo(`Triggering alias: ${args.alias}`);
-    const result = await mail.trigger(args.alias, args.to ? { to: args.to } : {});
-    if (result.ok) { printSuccess(`Sent (${result.messageId})`); }
-    else { printError(`Failed: ${result.error.message}`); process.exitCode = 1; }
+    try {
+      const result = await mail.trigger(args.alias, args.to ? { to: args.to } : {});
+      if (result.ok) { printSuccess(`Sent (${result.messageId})`); }
+      else { printError(`Failed: ${result.error.message}`); process.exitCode = 1; }
+    } finally {
+      await mail.shutdown();
+    }
     return;
   }
 
@@ -56,8 +61,11 @@ export async function sendEmail(args: SendArgs): Promise<void> {
   }
 
   printInfo(`Sending to ${args.to}...`);
-  const result = await mail.send(options);
-  if (result.ok) { printSuccess(`Sent successfully (${result.messageId})`); }
-  else { printError(`Failed: ${result.error.message}`); process.exitCode = 1; }
-  await mail.shutdown();
+  try {
+    const result = await mail.send(options);
+    if (result.ok) { printSuccess(`Sent successfully (${result.messageId})`); }
+    else { printError(`Failed: ${result.error.message}`); process.exitCode = 1; }
+  } finally {
+    await mail.shutdown();
+  }
 }

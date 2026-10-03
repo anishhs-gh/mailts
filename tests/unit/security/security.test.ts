@@ -148,15 +148,12 @@ describe('Address sanitisation', () => {
 describe('Attachment path traversal prevention', () => {
   it('throws if resolved path is a non-existent file', async () => {
     await expect(
-      resolveAttachment({ filename: 'test.txt', path: './does-not-exist-xyz.txt' }).then(r => r.getContent()),
+      resolveAttachment({ filename: 'test.txt', path: './does-not-exist-xyz.txt' }, 'allow').then(r => r.getContent()),
     ).rejects.toThrow();
   });
 
-  it('resolves path against cwd (no ../../ escape)', async () => {
-    const att = await resolveAttachment({ filename: 'f.txt', path: '../../../etc/passwd' });
-    // getContent() will throw because /etc/passwd doesn't exist in test env or is inaccessible
-    // The key assertion: the path is resolved, not raw — resolveAttachment itself doesn't throw
-    expect(att.filename).toBe('f.txt');
+  it('rejects any path when no policy is set (default deny)', async () => {
+    await expect(resolveAttachment({ filename: 'f.txt', path: '../../../etc/passwd' })).rejects.toThrow(/attachmentPolicy/);
   });
 });
 

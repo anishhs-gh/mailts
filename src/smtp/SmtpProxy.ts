@@ -1,5 +1,6 @@
 import * as net from 'net';
 
+/** Proxy for the SMTP connection (`SmtpConfig.proxy`). */
 export interface ProxyConfig {
   /** Proxy protocol. */
   type: 'http' | 'socks5' | 'socks4';
@@ -21,6 +22,13 @@ export async function connectThroughProxy(
   targetPort: number,
   timeoutMs: number,
 ): Promise<net.Socket> {
+  // The target host goes into a CONNECT line / SOCKS packet — reject anything that could break framing
+  if (!/^[A-Za-z0-9.:\-[\]_]+$/.test(targetHost) || Buffer.byteLength(targetHost) > 255) {
+    throw new Error(`Invalid proxy target host: ${JSON.stringify(targetHost)}`);
+  }
+  if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
+    throw new Error(`Invalid proxy target port: ${targetPort}`);
+  }
   const socket = await tcpConnect(proxy.host, proxy.port, timeoutMs);
 
   try {
@@ -72,19 +80,26 @@ function httpConnect(
 
     const timer = setTimeout(() => reject(new Error('HTTP CONNECT timeout')), timeoutMs);
 
-    let response = '';
+    let response = Buffer.alloc(0);
     const onData = (chunk: Buffer) => {
-      response += chunk.toString('binary');
-      if (response.includes('\r\n\r\n')) {
-        clearTimeout(timer);
-        socket.removeListener('data', onData);
-        const statusLine = response.split('\r\n')[0] ?? '';
-        const code = parseInt(statusLine.split(' ')[1] ?? '0', 10);
-        if (code === 200) {
-          resolve();
-        } else {
-          reject(new Error(`HTTP CONNECT failed: ${statusLine}`));
-        }
+      response = Buffer.concat([response, chunk]);
+      const end = response.indexOf('\r\n\r\n');
+      if (end === -1) {
+        if (response.length > 16 * 1024) { clearTimeout(timer); socket.removeListener('data', onData); reject(new Error('HTTP CONNECT: response header too large')); }
+        return;
+      }
+      clearTimeout(timer);
+      socket.removeListener('data', onData);
+      socket.pause();
+      const statusLine = response.subarray(0, response.indexOf('\r\n')).toString('latin1');
+      const code = parseInt(statusLine.split(' ')[1] ?? '0', 10);
+      if (code >= 200 && code < 300) {
+        // Bytes after the proxy header belong to the tunnel (e.g. the SMTP greeting)
+        const rest = response.subarray(end + 4);
+        if (rest.length) socket.unshift(rest);
+        resolve();
+      } else {
+        reject(new Error(`HTTP CONNECT failed: ${statusLine}`));
       }
     };
 
@@ -103,8 +118,8 @@ function socks5Connect(
   timeoutMs: number,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('SOCKS5 handshake timeout')), timeoutMs);
-    const cleanup = () => { clearTimeout(timer); socket.removeAllListeners('data'); };
+    const timer = setTimeout(() => { socket.removeListener('data', onData); reject(new Error('SOCKS5 handshake timeout')); }, timeoutMs);
+    const cleanup = () => { clearTimeout(timer); socket.removeListener('data', onData); };
 
     const hostBuf = Buffer.from(targetHost, 'utf8');
     const portBuf = Buffer.alloc(2);
@@ -153,7 +168,11 @@ function socks5Connect(
         else if (atyp === 0x04) addrLen = 16;
         else if (atyp === 0x03) addrLen = 1 + (buf[4] ?? 0);
         if (buf.length < 4 + addrLen + 2) return;
-        cleanup(); resolve();
+        const rest = buf.subarray(4 + addrLen + 2);
+        cleanup();
+        socket.pause();
+        if (rest.length) socket.unshift(rest);
+        resolve();
       }
     };
 
@@ -182,7 +201,7 @@ function socks4Connect(
   timeoutMs: number,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('SOCKS4 handshake timeout')), timeoutMs);
+    const timer = setTimeout(() => { socket.removeListener('data', onData); reject(new Error('SOCKS4 handshake timeout')); }, timeoutMs);
 
     const portBuf = Buffer.alloc(2);
     portBuf.writeUInt16BE(targetPort, 0);
@@ -207,9 +226,12 @@ function socks4Connect(
 
       clearTimeout(timer);
       socket.removeListener('data', onData);
+      socket.pause();
 
       const status = buf[1];
       if (status === 0x5a) {
+        const rest = buf.subarray(8);
+        if (rest.length) socket.unshift(rest);
         resolve();
       } else {
         reject(new Error(`SOCKS4 connect failed (status ${status})`));

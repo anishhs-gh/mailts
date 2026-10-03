@@ -1,6 +1,7 @@
 import { createReadStream } from 'fs';
+import { realpath } from 'fs/promises';
 import { Transform, type TransformCallback } from 'stream';
-import { resolve, basename } from 'path';
+import { resolve, basename, sep } from 'path';
 import type { Attachment } from '../types/core.js';
 import { MimeError } from '../errors.js';
 
@@ -97,15 +98,59 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
   });
 }
 
-export async function resolveAttachment(att: Attachment): Promise<ResolvedAttachment> {
+/**
+ * Controls reading attachments from the local filesystem via `path`.
+ * - `'deny'` (default when unset): `path` attachments are rejected — pass `content` instead
+ * - `'allow'`: any readable path, relative to `process.cwd()` — only for trusted callers
+ *   (CLIs, scripts); never for messages built from untrusted input (e.g. AI agents)
+ * - `{ root }`: only files inside `root` (symlinks resolved) are allowed
+ */
+export type AttachmentPathPolicy = 'allow' | 'deny' | { root: string };
+
+async function checkPath(path: string, policy: AttachmentPathPolicy | undefined): Promise<string> {
+  if (policy === undefined) {
+    throw new MimeError(
+      'Attachment `path` is disabled by default — pass `content`, or set attachmentPolicy ' +
+      '(\'allow\' for trusted callers, or { root }) to read files',
+    );
+  }
+  if (policy === 'deny') throw new MimeError('Attachment paths are disabled by attachmentPolicy');
+  if (policy === 'allow') return resolve(process.cwd(), path);
+  const given = resolve(policy.root);
+  const root = await realpath(given).catch(() => {
+    throw new MimeError(`attachmentPolicy root does not exist: ${policy.root}`);
+  });
+  const escapes = () => new MimeError(`Attachment path escapes the allowed root: ${basename(path)}`);
+  // Relative paths are relative to the root; absolute ones may reach it through a symlinked
+  // prefix (macOS /var → /private/var, /app → /srv/app), so the gate is the resolved path.
+  const lexical = resolve(root, path);
+  const real = await realpath(lexical).catch(() => {
+    // Don't reveal whether files outside the root exist.
+    if (isWithin(lexical, root) || isWithin(lexical, given)) throw new MimeError(`Attachment not found: ${basename(path)}`);
+    throw escapes();
+  });
+  if (!isWithin(real, root)) throw escapes();
+  return real;
+}
+
+function isWithin(path: string, root: string): boolean {
+  return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
+}
+
+/**
+ * @param policy - Path policy; `undefined` rejects `path` attachments (same as `'deny'`).
+ */
+export async function resolveAttachment(
+  att: Attachment,
+  policy?: AttachmentPathPolicy,
+): Promise<ResolvedAttachment> {
   const filename = att.filename || (att.path ? basename(att.path) : 'file');
   const contentType = att.contentType ?? guessMime(filename);
   const disposition = att.disposition ?? (att.cid ? 'inline' : 'attachment');
   const encoding = att.encoding ?? 'base64';
 
   if (att.path !== undefined) {
-    // Validate path — prevent traversal by resolving against cwd
-    const safePath = resolve(process.cwd(), att.path);
+    const safePath = await checkPath(att.path, policy);
     return {
       filename,
       contentType,

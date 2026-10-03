@@ -1,7 +1,12 @@
+import { EventEmitter } from 'events';
 import { ImapClient } from './ImapClient.js';
-import { decodeBytes } from './ImapParser.js';
+import { MailboxWatcher, type WatchOptions } from './MailboxWatcher.js';
 import type { BodyLeaf, BodyMultipart, BodyNode } from './ImapBodyStructure.js';
+import { decodeTransfer, decodeText } from '../core/MimeParser.js';
+import { buildMessage } from '../core/Message.js';
+import type { AttachmentPathPolicy } from '../core/Attachment.js';
 import type { Logger } from '../logger/Logger.js';
+import type { EmailOptions } from '../types/core.js';
 import type {
   ImapConfig,
   ImapMailboxStatus,
@@ -12,455 +17,444 @@ import type {
   ImapAppendResult,
   ImapStatusResult,
 } from '../types/imap.js';
+import { ImapConnError, ImapAuthError, ImapError } from '../errors.js';
 
 const DEFAULT_MAILBOX = 'INBOX';
+const BASE_ITEMS = 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE';
+
+/** Fallback names when the server does not advertise RFC 6154 special-use flags. */
+const SPECIAL_USE_FALLBACK: Record<string, string[]> = {
+  '\\Sent': ['Sent', 'Sent Items', 'Sent Messages', 'Sent Mail', '[Gmail]/Sent Mail', 'INBOX.Sent'],
+  '\\Drafts': ['Drafts', '[Gmail]/Drafts', 'INBOX.Drafts'],
+  '\\Trash': ['Trash', 'Deleted Items', 'Deleted Messages', '[Gmail]/Trash', 'INBOX.Trash'],
+  '\\Junk': ['Junk', 'Spam', 'Junk Email', '[Gmail]/Spam', 'INBOX.Junk'],
+  '\\Archive': ['Archive', 'Archives', '[Gmail]/All Mail', 'INBOX.Archive'],
+};
+
+/** Mailbox names are case-sensitive, except INBOX (RFC 3501 §5.1). */
+function sameMailbox(a: string, b: string): boolean {
+  return a.toUpperCase() === 'INBOX' && b.toUpperCase() === 'INBOX' ? true : a === b;
+}
 
 /**
- * High-level IMAP session with automatic mailbox locking.
+ * High-level IMAP session with automatic mailbox selection, locking and
+ * reconnection.
  *
- * Operations that require a selected mailbox accept an optional `mailbox`
- * parameter (default `'INBOX'`).  The session auto-selects the mailbox
- * when needed and uses an internal lock so that concurrent calls never
- * race between a SELECT and its following commands.
+ * - Connects lazily on first use (or explicitly via `connect()`).
+ * - Operations that need a mailbox accept an optional `mailbox` (default `'INBOX'`)
+ *   and auto-select it under a session lock, so concurrent calls never race.
+ * - When the connection drops, the next operation reconnects, re-authenticates
+ *   (calling `getToken` again for OAuth) and re-selects. An operation that was
+ *   in flight when the connection dropped is **not** retried — it rejects with a
+ *   retryable `ImapConnError` so callers decide (APPEND/MOVE are not idempotent).
+ *
+ * Events: `reconnect` (attempt), `close`, `error`.
  *
  * @example
  * ```ts
  * const session = mail.imap;
- * await session.connect();
- *
- * // No open() required — auto-selects INBOX
- * const msgs = await session.fetch({ seen: false });
- *
- * // Multi-mailbox — each call auto-selects the right mailbox
- * await session.move(msgs.map(m => m.uid), 'Archive');
- * const sent = await session.fetch({ mailbox: 'Sent', limit: 10 });
- *
+ * const unread = await session.fetch({ seen: false, bodies: true });
+ * await session.move(unread.map(m => m.uid), 'Archive');
  * await session.close();
  * ```
  */
-export class ImapSession {
-  private client: ImapClient;
+export class ImapSession extends EventEmitter {
+  private client: ImapClient | null = null;
+  private connecting: Promise<ImapClient> | null = null;
   private currentMailbox: ImapMailboxStatus | null = null;
-  private stopIdleFn: (() => Promise<void>) | null = null;
+  private idleWatcher: MailboxWatcher | null = null;
+  private closed = false;
+  private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+  private lastActivity = Date.now();
 
-  /**
-   * Session-level serialization lock.  Ensures the SELECT + subsequent
-   * commands of each logical operation execute atomically — no concurrent
-   * call can slip a reselect in between.
-   */
+  /** Session-level lock: SELECT + the following commands run atomically. */
   private sessionLock: Promise<unknown> = Promise.resolve();
 
-  constructor(config: ImapConfig, logger?: Logger) {
-    this.client = new ImapClient(config, logger);
+  constructor(
+    private readonly config: ImapConfig,
+    private readonly logger?: Logger,
+    /** `attachmentPolicy` for `appendMessage()` with `path` attachments (unset rejects them). */
+    private readonly options: { attachmentPolicy?: AttachmentPathPolicy } = {},
+  ) {
+    super();
+    this.on('error', () => {});
   }
 
-  /** Open the IMAP connection and authenticate. */
+  /** Open the IMAP connection and authenticate. Optional — operations connect lazily. */
   async connect(): Promise<void> {
-    await this.client.connect();
+    this.closed = false;
+    await this.ensureClient();
   }
 
-  // ─── Locking primitive ────────────────────────────────────────────────────
+  /** `true` while the underlying connection is open. */
+  get isConnected(): boolean {
+    return this.client?.isConnected ?? false;
+  }
 
-  /**
-   * Acquire the session lock, auto-select `mailbox` if it is not currently
-   * selected, then run `fn`.  Releases the lock (even on error) before the
-   * next queued operation starts.
-   */
-  private withMailbox<T>(mailbox: string, fn: () => Promise<T>): Promise<T> {
-    const result = this.sessionLock.then(async () => {
-      if (
-        !this.currentMailbox ||
-        this.currentMailbox.name.toLowerCase() !== mailbox.toLowerCase()
-      ) {
-        this.currentMailbox = await this.client.select(mailbox);
+  // ─── Connection management ────────────────────────────────────────────────
+
+  private async ensureClient(): Promise<ImapClient> {
+    if (this.closed) throw new ImapError('Session is closed');
+    if (this.client?.isConnected) return this.client;
+    if (this.connecting) return this.connecting;
+
+    const reconnect = this.config.reconnect === false ? { retries: 0, delayMs: 0 } : {
+      retries: this.config.reconnect?.retries ?? 3,
+      delayMs: this.config.reconnect?.delayMs ?? 1_000,
+    };
+    const wasConnected = this.client !== null;
+
+    this.connecting = (async () => {
+      let attempt = 0;
+      for (;;) {
+        const client = new ImapClient(this.config, this.logger);
+        try {
+          if (wasConnected || attempt > 0) this.emit('reconnect', attempt + 1);
+          await client.connect();
+          client.on('close', () => {
+            if (this.client === client) {
+              this.currentMailbox = null;
+              this.emit('close');
+            }
+          });
+          this.client = client;
+          this.currentMailbox = null;
+          this.startKeepAlive();
+          return client;
+        } catch (err) {
+          const retryable = err instanceof ImapConnError && !(err instanceof ImapAuthError);
+          if (!retryable || attempt >= reconnect.retries) throw err;
+          this.emit('error', err);
+          await new Promise(r => setTimeout(r, reconnect.delayMs * 2 ** attempt));
+          attempt++;
+        }
       }
-      return fn();
+    })();
+
+    try {
+      return await this.connecting;
+    } finally {
+      this.connecting = null;
+    }
+  }
+
+  private startKeepAlive(): void {
+    const ms = this.config.keepAliveMs ?? 0;
+    if (ms <= 0 || this.keepAliveTimer) return;
+    this.keepAliveTimer = setInterval(() => {
+      if (Date.now() - this.lastActivity < ms || !this.client?.isConnected) return;
+      this.locked(c => c.noop()).catch(() => {});
+    }, Math.max(1_000, Math.floor(ms / 2)));
+    this.keepAliveTimer.unref?.();
+  }
+
+  /** Run `fn` under the session lock with a connected client. */
+  private locked<T>(fn: (client: ImapClient) => Promise<T>): Promise<T> {
+    const result = this.sessionLock.then(async () => {
+      const client = await this.ensureClient();
+      this.lastActivity = Date.now();
+      return fn(client);
     });
     this.sessionLock = result.then(() => {}, () => {});
-    return result as Promise<T>;
+    return result;
+  }
+
+  /** Acquire the lock, auto-select `mailbox` if needed, then run `fn`. */
+  private withMailbox<T>(mailbox: string, fn: (client: ImapClient) => Promise<T>): Promise<T> {
+    return this.locked(async (client) => {
+      if (!this.currentMailbox || !client.selectedMailbox || !sameMailbox(this.currentMailbox.name, mailbox)) {
+        this.currentMailbox = await client.select(mailbox);
+      }
+      return fn(client);
+    });
+  }
+
+  private mailboxOr(mailbox?: string): string {
+    return mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
   }
 
   // ─── Capabilities ──────────────────────────────────────────────────────────
 
   /** Return the server's CAPABILITY set. */
   async getCapabilities(): Promise<Set<string>> {
-    return this.client.getCapabilities();
+    return this.locked(c => c.getCapabilities());
   }
 
   // ─── Mailbox listing ───────────────────────────────────────────────────────
 
   /** List mailboxes matching `pattern` under `ref`. Defaults to all mailboxes. */
   async listMailboxes(ref = '', pattern = '*'): Promise<ImapListEntry[]> {
-    return this.client.list(ref, pattern);
+    return this.locked(c => c.list(ref, pattern));
   }
 
   /** List subscribed mailboxes matching `pattern` under `ref`. */
   async listSubscribed(ref = '', pattern = '*'): Promise<ImapListEntry[]> {
-    return this.client.listSubscribed(ref, pattern);
+    return this.locked(c => c.listSubscribed(ref, pattern));
+  }
+
+  /**
+   * Find the mailbox with an RFC 6154 special-use role (`\\Sent`, `\\Drafts`,
+   * `\\Trash`, `\\Junk`, `\\Archive`, …), falling back to common names.
+   * Returns `undefined` when none exists.
+   */
+  async findMailbox(specialUse: string): Promise<string | undefined> {
+    const boxes = await this.listMailboxes();
+    const want = specialUse.toLowerCase();
+    const byFlag = boxes.find(b => b.specialUse?.toLowerCase() === want || b.flags.some(f => f.toLowerCase() === want));
+    if (byFlag) return byFlag.name;
+    const key = Object.keys(SPECIAL_USE_FALLBACK).find(k => k.toLowerCase() === want);
+    for (const name of key ? SPECIAL_USE_FALLBACK[key]! : []) {
+      const hit = boxes.find(b => b.name.toLowerCase() === name.toLowerCase());
+      if (hit) return hit.name;
+    }
+    return undefined;
   }
 
   // ─── Mailbox management ────────────────────────────────────────────────────
 
   /** Create a new mailbox. Throws if it already exists. */
   async createMailbox(mailbox: string): Promise<void> {
-    await this.client.createMailbox(mailbox);
+    await this.locked(c => c.createMailbox(mailbox));
   }
 
   /** Delete a mailbox and all its messages. */
   async deleteMailbox(mailbox: string): Promise<void> {
-    await this.client.deleteMailbox(mailbox);
+    await this.locked(async c => {
+      await c.deleteMailbox(mailbox);
+      if (this.currentMailbox && sameMailbox(this.currentMailbox.name, mailbox)) this.currentMailbox = null;
+    });
   }
 
   /** Rename mailbox `from` to `to`. */
   async renameMailbox(from: string, to: string): Promise<void> {
-    await this.client.renameMailbox(from, to);
+    await this.locked(c => c.renameMailbox(from, to));
   }
 
   /** Subscribe to a mailbox. */
   async subscribe(mailbox: string): Promise<void> {
-    await this.client.subscribe(mailbox);
+    await this.locked(c => c.subscribe(mailbox));
   }
 
   /** Unsubscribe from a mailbox. */
   async unsubscribe(mailbox: string): Promise<void> {
-    await this.client.unsubscribe(mailbox);
+    await this.locked(c => c.unsubscribe(mailbox));
   }
 
   // ─── Mailbox selection ─────────────────────────────────────────────────────
 
   /**
-   * Explicitly select a mailbox and return its status.
-   * Use this when you need the fresh mailbox metadata (EXISTS, UIDNEXT, …).
-   * Regular operations (fetch, move, …) auto-select without needing this.
+   * Select a mailbox and return fresh status, including the `unseen` count.
+   * Regular operations auto-select without needing this.
    */
   async open(mailbox = DEFAULT_MAILBOX): Promise<ImapMailboxStatus> {
-    const result = this.sessionLock.then(async () => {
-      // Always re-select to get a fresh status snapshot
-      this.currentMailbox = await this.client.select(mailbox);
-      return this.currentMailbox;
+    return this.locked(async (c) => {
+      const counts = await c.getStatus(mailbox, ['UNSEEN']).catch(() => ({} as ImapStatusResult));
+      const status = await c.select(mailbox);
+      if (counts.unseen !== undefined) status.unseen = counts.unseen;
+      this.currentMailbox = status;
+      return status;
     });
-    this.sessionLock = result.then(() => {}, () => {});
-    return result as Promise<ImapMailboxStatus>;
   }
 
   /**
-   * Open a mailbox read-only (EXAMINE).  Flag changes are not allowed
-   * while in this mode.  Regular operations that need write access should
-   * call `open()` afterwards.
+   * Open a mailbox read-only (EXAMINE). Flag changes are not allowed while in
+   * this mode; the next write operation re-selects read-write.
    */
   async openReadOnly(mailbox = DEFAULT_MAILBOX): Promise<ImapMailboxStatus> {
-    const result = this.sessionLock.then(async () => {
-      this.currentMailbox = await this.client.examine(mailbox);
+    return this.locked(async (c) => {
+      this.currentMailbox = await c.examine(mailbox);
       return this.currentMailbox;
     });
-    this.sessionLock = result.then(() => {}, () => {});
-    return result as Promise<ImapMailboxStatus>;
   }
 
-  /**
-   * Get STATUS of any mailbox without selecting it.
-   * This never changes the currently selected mailbox.
-   */
+  /** Get STATUS of any mailbox without selecting it. */
   async getStatus(mailbox: string, items?: string[]): Promise<ImapStatusResult> {
-    return this.client.getStatus(mailbox, items);
+    return this.locked(c => c.getStatus(mailbox, items));
   }
 
   // ─── Fetch & search ────────────────────────────────────────────────────────
 
   /**
-   * Fetch messages.  Auto-selects `opts.mailbox` (default `'INBOX'`).
-   *
-   * @example
-   * ```ts
-   * // No open() needed
-   * const unread = await session.fetch({ seen: false });
-   * const recent = await session.fetch({ mailbox: 'Sent', limit: 10 });
-   * ```
+   * Fetch messages. Auto-selects `opts.mailbox` (default: current or `'INBOX'`).
+   * Never sets `\\Seen` unless `markSeen: true`.
    */
   async fetch(opts: ImapFetchOptions = {}): Promise<ImapMessage[]> {
-    const mailbox = opts.mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mailbox, async () => {
+    const mailbox = this.mailboxOr(opts.mailbox);
+    return this.withMailbox(mailbox, async (client) => {
       let uids: number[];
-
       if (opts.uids) {
         uids = opts.uids;
       } else {
-        const query: ImapSearchCriteria = {};
+        const query: ImapSearchCriteria = { ...(opts.search ?? {}) };
         if (opts.seen === true) query.seen = true;
         if (opts.seen === false) query.unseen = true;
-        uids = await this.client.search(query);
-        if (opts.limit !== undefined) uids = uids.slice(-opts.limit);
+        uids = await client.search(query);
+        uids.sort((a, b) => a - b);
+        if (opts.limit !== undefined) uids = opts.limit > 0 ? uids.slice(-opts.limit) : [];
       }
-
       if (uids.length === 0) return [];
 
-      // ── textOnly: BODYSTRUCTURE + selective text section fetches ──────────
+      let messages: ImapMessage[];
       if (opts.textOnly) {
-        return this.fetchTextOnly(uids, opts.markSeen ?? false);
+        messages = await this.fetchTextOnly(client, uids);
+      } else {
+        const headerItem = opts.headers?.length
+          ? ` BODY.PEEK[HEADER.FIELDS (${opts.headers.map(h => h.replace(/[^A-Za-z0-9-]/g, '')).join(' ')})]`
+          : '';
+        const items = BASE_ITEMS
+          + (opts.structure ? ' BODYSTRUCTURE' : '')
+          + (opts.bodies ? ' BODY.PEEK[]' : '')
+          + headerItem;
+        messages = await client.fetch(uids, items);
       }
 
-      // ── structure: BODYSTRUCTURE only, no content ─────────────────────────
-      if (opts.structure) {
-        const messages = await this.client.fetch(
-          uids,
-          'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE',
-        );
-        const structures = await this.client.fetchBodyStructure(uids);
-        for (const msg of messages) {
-          const s = structures.get(msg.uid);
-          if (s) msg.structure = s;
-        }
-        return messages;
-      }
-
-      // ── bodies: full RFC822 ───────────────────────────────────────────────
-      const items = opts.bodies
-        ? 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE RFC822'
-        : 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE';
-
-      const messages = await this.client.fetch(uids, items);
-
-      if (opts.markSeen && uids.length > 0) {
-        await this.client.setFlagsSilent(uids, ['\\Seen'], true);
-      }
-
+      if (opts.markSeen) await client.setFlagsSilent(uids, ['\\Seen'], true);
       return messages;
     });
   }
 
-  private async fetchTextOnly(uids: number[], markSeen: boolean): Promise<ImapMessage[]> {
-    const messages = await this.client.fetch(
-      uids,
-      'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE',
-    );
-    const structures = await this.client.fetchBodyStructure(uids);
+  private async fetchTextOnly(client: ImapClient, uids: number[]): Promise<ImapMessage[]> {
+    const messages = await client.fetch(uids, `${BASE_ITEMS} BODYSTRUCTURE`);
 
-    // Build per-UID section lists: only text/plain and text/html leaves
-    const uidSections = new Map<number, { textSection?: string; htmlSection?: string }>();
-    const allSections: string[] = [];
-
+    const leaves = new Map<number, { text?: BodyLeaf; html?: BodyLeaf }>();
+    const sections = new Set<string>();
     for (const msg of messages) {
-      const tree = structures.get(msg.uid);
-      if (!tree) continue;
-      msg.structure = tree;
-      const text = findLeaf(tree, 'text/plain');
-      const html = findLeaf(tree, 'text/html');
-      const entry: { textSection?: string; htmlSection?: string } = {};
-      if (text) { entry.textSection = text.section; allSections.push(text.section); }
-      if (html) { entry.htmlSection  = html.section; allSections.push(html.section); }
-      uidSections.set(msg.uid, entry);
+      if (!msg.structure) continue;
+      const text = findLeaf(msg.structure, 'text/plain');
+      const html = findLeaf(msg.structure, 'text/html');
+      leaves.set(msg.uid, { text, html });
+      if (text) sections.add(text.section);
+      if (html) sections.add(html.section);
     }
+    if (sections.size === 0) return messages;
 
-    if (allSections.length > 0) {
-      const unique = [...new Set(allSections)];
-      const fetched = await this.client.fetchSections(uids, unique);
-
-      for (const msg of messages) {
-        const entry = uidSections.get(msg.uid);
-        if (!entry) continue;
-        const sectionMap = fetched.get(msg.uid) ?? new Map<string, Buffer>();
-        const tree = structures.get(msg.uid);
-
-        msg.body = { attachments: [] };
-
-        if (entry.textSection) {
-          const raw = sectionMap.get(entry.textSection);
-          const leaf = tree ? findLeaf(tree, 'text/plain') : undefined;
-          if (raw && leaf) msg.body.text = decodeBytes(raw, leaf.charset ?? 'utf-8');
-        }
-        if (entry.htmlSection) {
-          const raw = sectionMap.get(entry.htmlSection);
-          const leaf = tree ? findLeaf(tree, 'text/html') : undefined;
-          if (raw && leaf) msg.body.html = decodeBytes(raw, leaf.charset ?? 'utf-8');
-        }
-      }
+    const fetched = await client.fetchSections(uids, [...sections]);
+    for (const msg of messages) {
+      const entry = leaves.get(msg.uid);
+      if (!entry) continue;
+      const bySection = fetched.get(msg.uid);
+      msg.body = { attachments: [] };
+      const decode = (leaf: BodyLeaf | undefined) => {
+        const raw = leaf ? bySection?.get(leaf.section) : undefined;
+        if (!leaf || !raw) return undefined;
+        return decodeText(decodeTransfer(raw.toString('latin1'), leaf.encoding), leaf.charset);
+      };
+      const text = decode(entry.text);
+      const html = decode(entry.html);
+      if (text !== undefined) msg.body.text = text;
+      if (html !== undefined) msg.body.html = html;
     }
-
-    if (markSeen && uids.length > 0) {
-      await this.client.setFlagsSilent(uids, ['\\Seen'], true);
-    }
-
     return messages;
   }
 
-  /**
-   * Search for messages matching `criteria` in `mailbox` (default `'INBOX'`).
-   * Returns UIDs. Auto-selects the mailbox.
-   *
-   * @example
-   * ```ts
-   * const uids = await session.search({ from: 'boss@example.com', unseen: true });
-   * const msgs  = await session.fetch({ uids, bodies: true });
-   * ```
-   */
-  async search(
-    criteria: ImapSearchCriteria,
-    mailbox = DEFAULT_MAILBOX,
-  ): Promise<number[]> {
-    return this.withMailbox(mailbox, () => this.client.search(criteria));
+  /** Search `mailbox` (default: current or `'INBOX'`) and return matching UIDs. */
+  async search(criteria: ImapSearchCriteria, mailbox?: string): Promise<number[]> {
+    return this.withMailbox(this.mailboxOr(mailbox), c => c.search(criteria));
   }
 
-  /**
-   * Fetch the MIME structure tree for a single message without downloading any content.
-   * Use the returned `BodyNode` to inspect parts and decide which sections to fetch.
-   *
-   * @example
-   * ```ts
-   * const tree = await session.fetchStructure(uid);
-   * // tree is a BodyMultipart or BodyLeaf describing the full MIME tree
-   * ```
-   */
+  /** Fetch the MIME structure tree for a single message without downloading content. */
   async fetchStructure(uid: number, mailbox?: string): Promise<BodyNode | undefined> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, async () => {
-      const map = await this.client.fetchBodyStructure([uid]);
-      return map.get(uid);
-    });
+    return this.withMailbox(this.mailboxOr(mailbox), async (c) => (await c.fetchBodyStructure([uid])).get(uid));
   }
 
   /**
-   * Fetch a single MIME section as raw bytes. Uses BODY.PEEK — never sets \\Seen.
-   * `section` is the IMAP section number: "1", "2", "3.1", etc.
-   *
-   * @example
-   * ```ts
-   * const bytes = await session.fetchSection(uid, '2');  // fetch HTML part
-   * ```
+   * Fetch one MIME section as raw bytes (still transfer-encoded). Uses BODY.PEEK —
+   * never sets `\\Seen`. `section` is `"1"`, `"2"`, `"3.1"`, … — or `''` for the
+   * complete RFC 5322 message (useful for forwarding and `parseMessage()`).
    */
   async fetchSection(uid: number, section: string, mailbox?: string): Promise<Buffer> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () => this.client.fetchSection(uid, section));
+    return this.withMailbox(this.mailboxOr(mailbox), c => c.fetchSection(uid, section));
+  }
+
+  /** Fetch the complete raw RFC 5322 source of a message (`BODY.PEEK[]`). */
+  async fetchRaw(uid: number, mailbox?: string): Promise<Buffer> {
+    return this.fetchSection(uid, '', mailbox);
   }
 
   /**
    * Fetch text/plain and text/html parts only — no attachment bytes transferred.
-   * Far more bandwidth-efficient than `fetch({ bodies: true })` for large messages.
    * Also populates `message.structure` with the full MIME tree.
-   *
-   * @example
-   * ```ts
-   * const msgs = await session.fetchText([uid1, uid2]);
-   * console.log(msgs[0].body?.text);
-   * ```
    */
   async fetchText(uids: number[], mailbox?: string): Promise<ImapMessage[]> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () => this.fetchTextOnly(uids, false));
+    return this.withMailbox(this.mailboxOr(mailbox), c => this.fetchTextOnly(c, uids));
   }
 
-  /**
-   * Fetch messages changed since a CONDSTORE mod-sequence.
-   * Requires the server to advertise CONDSTORE capability.
-   * Auto-selects `mailbox` (default: last opened or `'INBOX'`).
-   */
-  async fetchChanged(
-    modseq: number,
-    mailbox?: string,
-    uids = '1:*',
-  ): Promise<ImapMessage[]> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () => this.client.fetchChanged(uids, modseq));
+  /** Fetch messages changed since a CONDSTORE mod-sequence. */
+  async fetchChanged(modseq: number, mailbox?: string, uids = '1:*'): Promise<ImapMessage[]> {
+    return this.withMailbox(this.mailboxOr(mailbox), c => c.fetchChanged(uids, modseq));
   }
 
   // ─── Flag operations ───────────────────────────────────────────────────────
 
-  /** Mark UIDs as seen.  Auto-selects `mailbox` (default `'INBOX'`). */
+  /** Mark UIDs as seen. */
   async markSeen(uids: number[], mailbox?: string): Promise<void> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () =>
-      this.client.setFlags(uids, ['\\Seen'], true),
-    );
+    return this.setFlags(uids, ['\\Seen'], true, mailbox);
   }
 
-  /** Mark UIDs as unseen.  Auto-selects `mailbox` (default `'INBOX'`). */
+  /** Mark UIDs as unseen. */
   async markUnseen(uids: number[], mailbox?: string): Promise<void> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () =>
-      this.client.setFlags(uids, ['\\Seen'], false),
-    );
+    return this.setFlags(uids, ['\\Seen'], false, mailbox);
   }
 
-  /** Set \\Flagged on UIDs.  Auto-selects `mailbox`. */
+  /** Set \\Flagged on UIDs. */
   async markFlagged(uids: number[], mailbox?: string): Promise<void> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () =>
-      this.client.setFlags(uids, ['\\Flagged'], true),
-    );
+    return this.setFlags(uids, ['\\Flagged'], true, mailbox);
   }
 
-  /** Clear \\Flagged on UIDs.  Auto-selects `mailbox`. */
+  /** Clear \\Flagged on UIDs. */
   async markUnflagged(uids: number[], mailbox?: string): Promise<void> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () =>
-      this.client.setFlags(uids, ['\\Flagged'], false),
-    );
+    return this.setFlags(uids, ['\\Flagged'], false, mailbox);
   }
 
-  /** Set or remove arbitrary flags.  Auto-selects `mailbox`. */
-  async setFlags(
-    uids: number[],
-    flags: string[],
-    add: boolean,
-    mailbox?: string,
-  ): Promise<void> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () =>
-      this.client.setFlags(uids, flags, add),
-    );
+  /** Set or remove arbitrary flags. */
+  async setFlags(uids: number[], flags: string[], add: boolean, mailbox?: string): Promise<void> {
+    return this.withWritable(this.mailboxOr(mailbox), c => c.setFlags(uids, flags, add));
+  }
+
+  /** Like `withMailbox`, but re-selects read-write when the mailbox was EXAMINEd. */
+  private withWritable<T>(mailbox: string, fn: (client: ImapClient) => Promise<T>): Promise<T> {
+    return this.locked(async (client) => {
+      const cur = this.currentMailbox;
+      if (!cur || !client.selectedMailbox || !sameMailbox(cur.name, mailbox) || cur.readOnly) {
+        this.currentMailbox = await client.select(mailbox);
+      }
+      return fn(client);
+    });
   }
 
   // ─── Copy / Move / Delete ──────────────────────────────────────────────────
 
-  /**
-   * Copy UIDs to `destMailbox`.
-   * `sourceMailbox` defaults to the currently selected mailbox or `'INBOX'`.
-   */
-  async copy(
-    uids: number[],
-    destMailbox: string,
-    sourceMailbox?: string,
-  ): Promise<void> {
-    const mb = sourceMailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () => this.client.copy(uids, destMailbox));
+  /** Copy UIDs to `destMailbox` from `sourceMailbox` (default: current or INBOX). */
+  async copy(uids: number[], destMailbox: string, sourceMailbox?: string): Promise<void> {
+    return this.withMailbox(this.mailboxOr(sourceMailbox), c => c.copy(uids, destMailbox));
+  }
+
+  /** Move UIDs to `destMailbox` (MOVE extension, or COPY + delete). */
+  async move(uids: number[], destMailbox: string, sourceMailbox?: string): Promise<void> {
+    return this.withWritable(this.mailboxOr(sourceMailbox), c => c.move(uids, destMailbox));
   }
 
   /**
-   * Move UIDs to `destMailbox`.  Uses MOVE extension when available,
-   * falls back to COPY + STORE \\Deleted + EXPUNGE.
-   * `sourceMailbox` defaults to the currently selected mailbox or `'INBOX'`.
-   */
-  async move(
-    uids: number[],
-    destMailbox: string,
-    sourceMailbox?: string,
-  ): Promise<void> {
-    const mb = sourceMailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () => this.client.move(uids, destMailbox));
-  }
-
-  /**
-   * Mark UIDs \\Deleted then EXPUNGE.
-   * Auto-selects `mailbox` (default `'INBOX'`).
+   * Mark UIDs \\Deleted and expunge **only those UIDs** (UIDPLUS); without UIDPLUS
+   * a plain EXPUNGE runs, which also removes other messages already flagged \\Deleted.
    */
   async delete(uids: number[], mailbox?: string): Promise<void> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, async () => {
-      await this.client.setFlags(uids, ['\\Deleted'], true);
-      await this.client.expunge();
+    return this.withWritable(this.mailboxOr(mailbox), async (c) => {
+      await c.setFlagsSilent(uids, ['\\Deleted'], true);
+      await c.expungeUids(uids);
     });
   }
 
-  /** Expunge deleted messages.  Auto-selects `mailbox`. */
+  /** Expunge all messages flagged \\Deleted. */
   async expunge(mailbox?: string): Promise<void> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    return this.withMailbox(mb, () => this.client.expunge());
+    return this.withWritable(this.mailboxOr(mailbox), c => c.expunge());
   }
 
   // ─── Append ────────────────────────────────────────────────────────────────
 
   /**
-   * Upload a raw RFC 5322 message to `mailbox` (e.g. save to Sent or Drafts).
-   * Does NOT require a mailbox to be selected — APPEND works on any mailbox.
+   * Upload a raw RFC 5322 message to `mailbox` (e.g. Sent or Drafts).
+   * Does not require a selected mailbox.
    */
   async append(
     mailbox: string,
@@ -468,53 +462,83 @@ export class ImapSession {
     flags: string[] = ['\\Seen'],
     internalDate?: Date,
   ): Promise<ImapAppendResult> {
-    return this.client.append(mailbox, raw, flags, internalDate);
+    return this.locked(c => c.append(mailbox, raw, flags, internalDate));
   }
-
-  // ─── IDLE ──────────────────────────────────────────────────────────────────
 
   /**
-   * Enter IDLE mode on `mailbox` (default `'INBOX'`).
-   * `callback` fires with a partial `ImapMessage` (just `seq`) when new mail arrives.
-   * Call `stopIdle()` to exit.
+   * Build a message from `EmailOptions` (or take raw bytes) and APPEND it.
+   *
+   * @example
+   * ```ts
+   * await session.appendMessage('Drafts', { from, to, subject, text }, ['\\Draft']);
+   * ```
    */
-  async idle(
-    callback: (msg: Partial<ImapMessage>) => void,
-    mailbox?: string,
-  ): Promise<void> {
-    const mb = mailbox ?? this.currentMailbox?.name ?? DEFAULT_MAILBOX;
-    // Acquire the session lock for the duration of IDLE — no other
-    // mailbox operation should run while we are in IDLE.
-    const idlePromise = this.sessionLock.then(async () => {
-      if (
-        !this.currentMailbox ||
-        this.currentMailbox.name.toLowerCase() !== mb.toLowerCase()
-      ) {
-        this.currentMailbox = await this.client.select(mb);
-      }
-      this.stopIdleFn = await this.client.idle(callback);
-    });
-    this.sessionLock = idlePromise.then(() => {}, () => {});
-    await idlePromise;
+  async appendMessage(
+    mailbox: string,
+    message: EmailOptions | Buffer | string,
+    flags: string[] = ['\\Seen'],
+    internalDate?: Date,
+  ): Promise<ImapAppendResult & { messageId?: string }> {
+    if (Buffer.isBuffer(message) || typeof message === 'string') {
+      return this.append(mailbox, message, flags, internalDate);
+    }
+    const built = await buildMessage(message, { attachmentPolicy: this.options.attachmentPolicy });
+    const res = await this.append(mailbox, built.raw, flags, internalDate ?? message.date);
+    return { ...res, messageId: built.messageId };
   }
 
-  /** Exit IDLE mode and release the session lock. */
+  // ─── Watching / IDLE ───────────────────────────────────────────────────────
+
+  /**
+   * Watch a mailbox on a dedicated connection and receive **UIDs** of new
+   * messages (IDLE, or polling when unsupported). Reconnects automatically.
+   * Stop with `watcher.stop()`.
+   *
+   * @example
+   * ```ts
+   * const watcher = await session.watch('INBOX');
+   * watcher.on('new', async (uids) => {
+   *   const msgs = await session.fetch({ uids, textOnly: true });
+   * });
+   * ```
+   */
+  async watch(mailbox = DEFAULT_MAILBOX, opts?: WatchOptions): Promise<MailboxWatcher> {
+    const watcher = new MailboxWatcher(this.config, mailbox, opts, this.logger);
+    await watcher.start();
+    return watcher;
+  }
+
+  /**
+   * Enter IDLE on `mailbox`. `callback` fires with `{ uid, seq }` for each new
+   * message. Runs on a dedicated connection, so other session calls keep working.
+   * Call `stopIdle()` to exit. Prefer `watch()` for new code.
+   */
+  async idle(callback: (msg: Partial<ImapMessage>) => void, mailbox?: string): Promise<void> {
+    await this.stopIdle();
+    const watcher = await this.watch(this.mailboxOr(mailbox));
+    watcher.on('new', (uids: number[]) => { for (const uid of uids) callback({ uid }); });
+    this.idleWatcher = watcher;
+  }
+
+  /** Exit IDLE started with `idle()`. */
   async stopIdle(): Promise<void> {
-    if (this.stopIdleFn) {
-      await this.stopIdleFn();
-      this.stopIdleFn = null;
-    }
+    const w = this.idleWatcher;
+    this.idleWatcher = null;
+    await w?.stop();
   }
 
   // ─── Close ─────────────────────────────────────────────────────────────────
 
-  /** Stop IDLE if active, then close the IMAP connection. */
+  /** Stop IDLE if active, then log out and close the connection. */
   async close(): Promise<void> {
-    if (this.stopIdleFn) await this.stopIdle();
-    await this.client.close();
+    this.closed = true;
+    if (this.keepAliveTimer) { clearInterval(this.keepAliveTimer); this.keepAliveTimer = null; }
+    await this.stopIdle();
+    const client = this.client;
+    this.client = null;
+    this.currentMailbox = null;
+    await client?.close();
   }
-
-  // ─── Status accessors ─────────────────────────────────────────────────────
 
   /** The status of the currently selected mailbox, or `null` if none. */
   get status(): ImapMailboxStatus | null {
@@ -524,9 +548,10 @@ export class ImapSession {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+/** First leaf of `contentType` that is not an attachment. */
 function findLeaf(node: BodyNode, contentType: string): BodyLeaf | undefined {
   if (node.type === 'leaf') {
-    return node.contentType === contentType ? node : undefined;
+    return node.contentType === contentType && node.disposition !== 'attachment' ? node : undefined;
   }
   for (const child of (node as BodyMultipart).parts) {
     const found = findLeaf(child, contentType);

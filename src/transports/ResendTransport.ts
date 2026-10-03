@@ -1,9 +1,12 @@
 import { httpRequest } from './HttpClient.js';
-import { toAddressStrings, resolveApiAttachments } from './utils.js';
+import { jsonBodyOptions, toAddressStrings, resolveApiAttachments, apiHeaders, assertOk, parseJson, request } from './utils.js';
 import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
 
+/**
+ * Options for `new ResendTransport()`.
+ */
 export interface ResendConfig {
   /** Resend API key — starts with `re_`. */
   apiKey: string;
@@ -30,6 +33,7 @@ export class ResendTransport implements Transport {
   }
 
   async send(message: BuiltMessage, options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
+    options = jsonBodyOptions(options, 'Resend');
     const from = toAddressStrings(options.from ?? message.from)[0] ?? message.from;
     const attachments = await resolveApiAttachments(options.attachments ?? []);
 
@@ -44,16 +48,19 @@ export class ResendTransport implements Transport {
     if (options.cc)    payload['cc']       = toAddressStrings(options.cc);
     if (options.bcc)   payload['bcc']      = toAddressStrings(options.bcc);
     if (options.replyTo) payload['reply_to'] = toAddressStrings(options.replyTo)[0];
-    if (options.headers) payload['headers'] = options.headers;
+    const headers = apiHeaders(options, message);
+    if (Object.keys(headers).length) payload['headers'] = headers;
 
     if (attachments.length) {
       payload['attachments'] = attachments.map(a => ({
-        filename: a.filename,
-        content:  a.data.toString('base64'),
+        filename:     a.filename,
+        content:      a.data.toString('base64'),
+        content_type: a.contentType,
+        ...(a.cid ? { content_id: a.cid } : {}),
       }));
     }
 
-    const res = await httpRequest({
+    const res = await request('resend', () => httpRequest({
       method: 'POST',
       url: `${this.base}/emails`,
       headers: {
@@ -62,13 +69,10 @@ export class ResendTransport implements Transport {
       },
       body: JSON.stringify(payload),
       signal,
-    });
+    }));
+    assertOk('resend', res);
 
-    if (res.status >= 400) {
-      throw new Error(`Resend error ${res.status}: ${res.body}`);
-    }
-
-    const data = JSON.parse(res.body) as { id: string };
+    const data = parseJson<{ id: string }>('resend', res);
     return { messageId: data.id, accepted: message.to, rejected: [] };
   }
 }

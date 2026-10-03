@@ -9,7 +9,8 @@ export type ErrorCode =
   | 'EMIME'
   | 'EQUEUE'
   | 'EIMAP'
-  | 'ETEMPLATE';
+  | 'ETEMPLATE'
+  | 'ELIMIT';
 
 /** Base error for all mailts failures. Check `code` to distinguish categories. */
 export class MailTsError extends Error {
@@ -103,9 +104,29 @@ export class SmtpTlsError extends MailTsError {
 
 /** Thrown for IMAP protocol or connection errors. */
 export class ImapError extends MailTsError {
-  constructor(message: string, retryable = false) {
-    super(message, 'EIMAP', retryable);
+  /** Server response code, e.g. `AUTHENTICATIONFAILED`, `TRYCREATE`, `NONEXISTENT`. */
+  readonly responseCode?: string;
+
+  constructor(message: string, retryable = false, code: ErrorCode = 'EIMAP', responseCode?: string) {
+    super(message, code, retryable);
     this.name = 'ImapError';
+    this.responseCode = responseCode;
+  }
+}
+
+/** Thrown when IMAP authentication fails. Never retryable. */
+export class ImapAuthError extends ImapError {
+  constructor(message: string, responseCode?: string) {
+    super(message, false, 'EAUTH', responseCode);
+    this.name = 'ImapAuthError';
+  }
+}
+
+/** Thrown when the IMAP connection closes or times out mid-command. Retryable. */
+export class ImapConnError extends ImapError {
+  constructor(message: string) {
+    super(message, true, 'ECONN');
+    this.name = 'ImapConnError';
   }
 }
 
@@ -114,6 +135,50 @@ export class QueueError extends MailTsError {
   constructor(message: string) {
     super(message, 'EQUEUE', false);
     this.name = 'QueueError';
+  }
+}
+
+/**
+ * Thrown by HTTP API transports (Resend, SendGrid, Mailgun, Postmark, SES, Graph, Gmail).
+ * 408 / 429 / 5xx are retryable; `retryAfterMs` carries the provider's Retry-After hint.
+ */
+export class TransportError extends MailTsError {
+  /** HTTP status returned by the provider (0 for network failures). */
+  readonly status: number;
+  /** Provider name, e.g. `resend`. */
+  readonly provider: string;
+  /** Suggested wait before retrying, from `Retry-After`. */
+  readonly retryAfterMs?: number;
+
+  constructor(message: string, provider: string, status: number, retryable: boolean, retryAfterMs?: number) {
+    super(message, status === 401 || status === 403 ? 'EAUTH' : status === 0 ? 'ECONN' : 'EREJECT', retryable);
+    this.name = 'TransportError';
+    this.provider = provider;
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+/**
+ * Thrown when a server response or message exceeds a configured size limit
+ * (`imap.limits`, SMTP reply size). Never retryable — the input will not shrink.
+ */
+export class LimitError extends MailTsError {
+  constructor(message: string) {
+    super(message, 'ELIMIT', false);
+    this.name = 'LimitError';
+  }
+}
+
+/** Thrown when an OAuth token request or authorization flow fails. */
+export class OAuthError extends MailTsError {
+  /** OAuth error code from the provider, e.g. `invalid_grant`. */
+  readonly oauthCode?: string;
+
+  constructor(message: string, oauthCode?: string, retryable = false) {
+    super(message, 'EAUTH', retryable);
+    this.name = 'OAuthError';
+    this.oauthCode = oauthCode;
   }
 }
 

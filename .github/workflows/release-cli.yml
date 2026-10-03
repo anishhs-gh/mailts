@@ -1,10 +1,18 @@
 name: Release @mailts/cli
 
+# Manual only — you choose the order (core → trap → cli / testing).
+# Run with dry_run (default) to verify and preview notes; run again with it off to publish.
 on:
-  push:
-    tags:
-      - '@mailts/cli@*'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run only — verify, dry-run publish and preview notes; no tag, release or publish'
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-cli
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -16,13 +24,19 @@ jobs:
       id-token: write
 
     steps:
+      - name: Publishing runs only from master
+        if: ${{ !inputs.dry_run && github.ref != 'refs/heads/master' }}
+        run: |
+          echo "::error::Publish from master (this run is on ${GITHUB_REF_NAME}). Dry runs work on any branch."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
 
@@ -35,43 +49,50 @@ jobs:
       - name: Build
         run: npm run build --workspace=packages/cli
 
-      - name: Verify tag matches package version
-        if: github.event_name == 'push'
-        working-directory: packages/cli
-        run: |
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${GITHUB_REF_NAME#@mailts/cli@}"
-          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
-            echo "Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
-            exit 1
-          fi
-
       - name: Rewrite file deps to published semver
         working-directory: packages/cli
         run: |
           MV=$(node -p 'require("../../package.json").version')
           node -e "const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));if(p.devDependencies&&p.devDependencies['@mailts/core']&&p.devDependencies['@mailts/core'].startsWith('file:'))p.devDependencies['@mailts/core']='>=${MV} <2.0.0';fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
 
-      - name: Determine release tag
+      # Version not yet on npm, tag free, and every @mailts/* it needs already published
+      - name: Release preflight
         id: release_tag
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "value=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          else
-            VERSION=$(node -p "require('./packages/cli/package.json').version")
-            echo "value=@mailts/cli@${VERSION}" >> $GITHUB_OUTPUT
-          fi
+        uses: ./.github/actions/release-preflight
+        with:
+          working-directory: packages/cli
+
+      # Prove the publish would succeed BEFORE a GitHub Release is created
+      - name: Verify publish (dry run)
+        uses: ./.github/actions/npm-dry-run
+        with:
+          working-directory: packages/cli
+          npm-token: ${{ secrets.NPM_TOKEN }}
+
+      # AI release notes via ledger (Bedrock); falls back to GitHub's auto notes
+      - name: Generate release notes (ledger)
+        id: notes
+        uses: ./.github/actions/release-notes
+        with:
+          package: '@mailts/cli'
+          tag: ${{ steps.release_tag.outputs.tag }}
+          bedrock-api-key: ${{ secrets.BEDROCK_API_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+          model: ${{ vars.LEDGER_MODEL }}
 
       - name: Create GitHub Release
-        if: github.event_name == 'push'
+        if: ${{ !inputs.dry_run }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release_tag.outputs.value }}
-          generate_release_notes: true
+          tag_name: ${{ steps.release_tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ steps.notes.outputs.generated == 'true' && steps.notes.outputs.notes-file || '' }}
+          generate_release_notes: ${{ steps.notes.outputs.generated != 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish to npm (signed)
+        if: ${{ !inputs.dry_run }}
         working-directory: packages/cli
         run: npm publish --provenance --access public
         env:

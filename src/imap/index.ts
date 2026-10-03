@@ -1,7 +1,18 @@
 export { ImapClient } from './ImapClient.js';
 export { ImapSession } from './ImapSession.js';
+export { ImapPool } from './ImapPool.js';
+export type { ImapPoolOptions, ImapPoolStats, ImapConfigSource } from './ImapPool.js';
 export { ImapParser } from './ImapParser.js';
 export { ImapCmd, buildSearchCommand } from './ImapCommands.js';
 export { parseFetchResponse, parseSectionResponse } from './ImapFetch.js';
 export { parseBodyStructure } from './ImapBodyStructure.js';
 export type { BodyNode, BodyLeaf, BodyMultipart } from './ImapBodyStructure.js';
+export { MailboxWatcher } from './MailboxWatcher.js';
+export type { WatchOptions } from './MailboxWatcher.js';
+export { ImapParts, buildSearchParts, checkFlags } from './ImapCommands.js';
+export { tokenize, encodeMailboxName, decodeMailboxName, uidSets } from './ImapTokenizer.js';
+export type { ImapToken } from './ImapTokenizer.js';
+export { parseFetchAttributes } from './ImapFetch.js';
+export type { FetchAttributes } from './ImapFetch.js';
+export { parseMessage } from '../core/MimeParser.js';
+export type { ParsedMessage } from '../core/MimeParser.js';

@@ -116,6 +116,8 @@ describe('ImapClient.connect', () => {
         const tag = d.toString().match(/^(\S+)/)?.[1] ?? 'T';
         if (/LOGIN/i.test(d.toString())) {
           socket.write(`${tag} NO [AUTHENTICATIONFAILED] Invalid credentials\r\n`);
+        } else {
+          socket.write(`* CAPABILITY IMAP4rev1\r\n${tag} OK done\r\n`);
         }
       });
     };
@@ -193,7 +195,7 @@ describe('ImapClient.select', () => {
       expect(status.name).toBe('INBOX');
       expect(status.exists).toBe(25);
       expect(status.recent).toBe(2);
-      expect(status.unseen).toBe(5);
+      expect(status.firstUnseen).toBe(5);
       expect(status.uidValidity).toBe(1234567890);
       expect(status.uidNext).toBe(101);
       expect(status.highestModSeq).toBe(715194045007);
@@ -743,11 +745,7 @@ describe('ImapClient command serialization', () => {
       await client.connect();
 
       // Fire three NOOPs concurrently — they should serialize, not interleave
-      await Promise.all([
-        (client as unknown as { command: (c: string) => Promise<unknown> }).command('NOOP'),
-        (client as unknown as { command: (c: string) => Promise<unknown> }).command('NOOP'),
-        (client as unknown as { command: (c: string) => Promise<unknown> }).command('NOOP'),
-      ]);
+      await Promise.all([client.noop(), client.noop(), client.noop()]);
 
       // Each NOOP should have received exactly one response (no interleaving)
       expect(received).toHaveLength(3);

@@ -11,6 +11,7 @@ export interface ICalAttendee {
   role?: ICalAttendeeRole;
 }
 
+/** A calendar event sent as an invite (`EmailOptions.ical`) — rendered as an event card with RSVP by most clients. */
 export interface ICalEvent {
   /** iCal method. @default 'REQUEST' */
   method?: ICalMethod;
@@ -27,7 +28,7 @@ export interface ICalEvent {
   /** Event end time. Same timezone convention as `start`. */
   end: Date;
   /** Organizer — name and email. */
-  organizer: { name: string; email: string };
+  organizer: { name?: string; email: string };
   /** Attendees to invite. */
   attendees?: ICalAttendee[];
   /** Stable UID for this event — auto-generated if omitted. */
@@ -64,7 +65,7 @@ export function buildICalString(event: ICalEvent): string {
     `SUMMARY:${escapeIcal(event.summary)}`,
     `SEQUENCE:${sequence}`,
     `STATUS:${status}`,
-    `ORGANIZER;CN=${escapeIcal(event.organizer.name)}:mailto:${event.organizer.email}`,
+    `ORGANIZER${event.organizer.name ? `;CN=${escapeIcal(event.organizer.name)}` : ''}:mailto:${mailto(event.organizer.email)}`,
   ];
 
   if (event.description) {
@@ -79,7 +80,7 @@ export function buildICalString(event: ICalEvent): string {
     const role = att.role ?? 'REQ-PARTICIPANT';
     const rsvp = att.rsvp !== false ? 'TRUE' : 'FALSE';
     const cn = att.name ? `;CN=${escapeIcal(att.name)}` : '';
-    lines.push(`ATTENDEE;ROLE=${role};RSVP=${rsvp}${cn}:mailto:${att.email}`);
+    lines.push(`ATTENDEE;ROLE=${role};RSVP=${rsvp}${cn}:mailto:${mailto(att.email)}`);
   }
 
   lines.push('END:VEVENT', 'END:VCALENDAR');
@@ -101,7 +102,12 @@ function formatDate(d: Date, tz: string): string {
 }
 
 function escapeIcal(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+  return s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n').replace(/\r/g, '');
+}
+
+/** Calendar addresses are URI values — strip anything that could break the content line. */
+function mailto(email: string): string {
+  return email.replace(/[\r\n\s:;,"<>]/g, '');
 }
 
 function foldIcalLine(line: string): string {

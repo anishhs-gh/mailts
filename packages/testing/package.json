@@ -1,6 +1,6 @@
 {
   "name": "@mailts/testing",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Vitest/Jest helpers for testing email sending with @mailts/trap",
   "license": "MIT",
   "author": {
@@ -24,7 +24,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "build": "tsup",
@@ -34,10 +34,10 @@
     "prepublishOnly": "npm run build && npm run test"
   },
   "dependencies": {
-    "@mailts/trap": ">=0.1.0 <2.0.0"
+    "@mailts/trap": ">=1.1.0 <2.0.0"
   },
   "peerDependencies": {
-    "@mailts/core": ">=0.1.0 <2.0.0"
+    "@mailts/core": ">=1.0.0 <2.0.0"
   },
   "peerDependenciesMeta": {
     "@mailts/core": {

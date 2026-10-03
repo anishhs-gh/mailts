@@ -1,0 +1,73 @@
+name: 'npm publish dry run'
+description: >
+  Proves a publish would succeed without publishing: NPM_TOKEN is set and valid,
+  the account has publish (read-write) access to the package, `npm publish --dry-run`
+  passes and `npm pack --dry-run` lists the tarball contents. Run it after the build
+  (and after any publish-time package.json rewrites) so it checks exactly what ships.
+
+inputs:
+  working-directory:
+    description: 'Package directory (repo root for @mailts/core, packages/<name> for workspaces)'
+    required: false
+    default: '.'
+  npm-token:
+    description: 'npm automation token (pass secrets.NPM_TOKEN)'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Verify npm auth & publish permission
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.npm-token }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+          echo "::error::NPM_TOKEN secret is not set — publishing would fail."
+          exit 1
+        fi
+
+        pkg="$(node -p "require('./package.json').name")"
+
+        # Run whoami as its own command so a failure fails the step.
+        if ! whoami_out="$(npm whoami 2>npm_err)"; then
+          cat npm_err
+          echo "::error::npm authentication failed — NPM_TOKEN is invalid or expired. Publishing would fail."
+          exit 1
+        fi
+        echo "Authenticated to npm as: $whoami_out"
+
+        # Confirm read-write (publish) access. A package that does not exist yet 404s —
+        # that is a first publish, which its scope owner is allowed to do.
+        if ! npm access list collaborators "$pkg" --json > "$RUNNER_TEMP/collabs.json" 2>npm_err; then
+          if grep -qiE '404|not found|E404' npm_err; then
+            echo "Package $pkg not found on npm — treating as first publish (OK)."
+            rm -f npm_err
+            exit 0
+          fi
+          cat npm_err
+          echo "::error::Could not read collaborators for $pkg — cannot confirm publish permission."
+          exit 1
+        fi
+        rm -f npm_err
+        perm="$(node -e 'const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(c[process.argv[2]]||"none")' "$RUNNER_TEMP/collabs.json" "$whoami_out")"
+        echo "Publish permission for $whoami_out on $pkg: $perm"
+        case "$perm" in
+          *write*) echo "Publish permission confirmed." ;;
+          *) echo "::error::$whoami_out lacks read-write (publish) access to $pkg."; exit 1 ;;
+        esac
+
+    - name: npm publish --dry-run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.npm-token }}
+      run: npm publish --dry-run --access public
+
+    - name: Package contents
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm pack --dry-run

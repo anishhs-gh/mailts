@@ -1,0 +1,85 @@
+name: 'Release notes (ledger)'
+description: >
+  Generates release notes for one package of this monorepo with ledger
+  (https://github.com/anishhs-gh/ledger) via AWS Bedrock. The range is computed
+  here — previous tag of the SAME package → this release — because ledger's own
+  "since last tag" would pick the nearest tag of any package. If the key is missing,
+  there is no previous tag, or generation fails, `generated` is false and the caller
+  falls back to GitHub's auto-generated notes, so a release is never blocked.
+
+inputs:
+  package:
+    description: 'Package name, e.g. @mailts/core (tags are <package>@<version>)'
+    required: true
+  tag:
+    description: 'Tag of this release (may not exist yet on workflow_dispatch runs)'
+    required: true
+  bedrock-api-key:
+    description: 'Pass secrets.BEDROCK_API_KEY'
+    required: false
+    default: ''
+  aws-region:
+    description: 'Pass vars.AWS_REGION (ledger defaults to us-east-1)'
+    required: false
+    default: ''
+  model:
+    description: 'Pass vars.LEDGER_MODEL to override the model in ledger.config.yaml'
+    required: false
+    default: ''
+  ledger-package:
+    description: 'npm spec of ledger to run'
+    required: false
+    default: '@anishhs/ledger@^1.1.0'
+
+outputs:
+  generated:
+    description: "'true' when ledger wrote the notes file"
+    value: ${{ steps.notes.outputs.generated }}
+  notes-file:
+    description: 'Path of the generated notes (in $RUNNER_TEMP, never committed)'
+    value: ${{ steps.notes.outputs.notes-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generate release notes
+      id: notes
+      shell: bash
+      # Inputs go through env, never interpolated into the script.
+      env:
+        PKG: ${{ inputs.package }}
+        TAG: ${{ inputs.tag }}
+        BEDROCK_API_KEY: ${{ inputs.bedrock-api-key }}
+        AWS_REGION: ${{ inputs.aws-region }}
+        LEDGER_MODEL: ${{ inputs.model }}
+        LEDGER_PACKAGE: ${{ inputs.ledger-package }}
+      run: |
+        set -uo pipefail
+        notes_file="$RUNNER_TEMP/RELEASE_NOTES.md"
+        echo "notes-file=$notes_file" >> "$GITHUB_OUTPUT"
+        fallback() { echo "::warning::$1 — falling back to GitHub auto-generated notes."; echo "generated=false" >> "$GITHUB_OUTPUT"; exit 0; }
+
+        [ -n "${BEDROCK_API_KEY:-}" ] || fallback "BEDROCK_API_KEY not set"
+
+        # End of the range: the tag if it exists, otherwise HEAD (manual runs before tagging).
+        if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then to="$TAG"; else to="HEAD"; fi
+
+        # Previous release of THIS package: highest version tag below the current one.
+        prev="$(git tag --list "${PKG}@*" --sort=-v:refname | grep -vxF "$TAG" | while read -r t; do
+          if [ "$(printf '%s\n%s\n' "${t#${PKG}@}" "${TAG#${PKG}@}" | sort -V | head -1)" = "${t#${PKG}@}" ]; then echo "$t"; break; fi
+        done)"
+        [ -n "$prev" ] || fallback "no previous ${PKG} tag (first release)"
+
+        echo "Release notes for ${PKG}: ${prev} → ${to}"
+        # Empty LEDGER_MODEL is ignored by ledger (falls back to ledger.config.yaml).
+        if npx --yes "$LEDGER_PACKAGE" generate \
+             --from "$prev" --to "$to" \
+             --output-file "$notes_file" \
+             --fail-on-empty --no-summary \
+           && [ -s "$notes_file" ]; then
+          { printf '_Package: `%s` · changes since `%s`_\n\n' "$PKG" "$prev"; cat "$notes_file"; } > "$notes_file.tmp" && mv "$notes_file.tmp" "$notes_file"
+          echo "generated=true" >> "$GITHUB_OUTPUT"
+          cat "$notes_file" >> "$GITHUB_STEP_SUMMARY"
+        else
+          fallback "ledger note generation failed"
+        fi

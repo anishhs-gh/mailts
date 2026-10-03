@@ -1,6 +1,7 @@
 import type { ICalEvent } from '../core/ICal.js';
+import type { UnsubscribeOptions } from '../core/Unsubscribe.js';
 
-export type { ICalEvent };
+export type { ICalEvent, UnsubscribeOptions };
 
 /** A recipient address — bare email string or `{ email, name }` object. */
 export type EmailAddress = string | { email: string; name?: string };
@@ -15,7 +16,10 @@ export interface Attachment {
   path?: string;
   /** MIME type (auto-detected from filename if omitted). */
   contentType?: string;
-  /** Transfer encoding.  Defaults to `base64`. */
+  /**
+   * Transfer encoding. Defaults to `base64`. `7bit` / `8bit` are only accepted
+   * for text content that fits (no NUL, lines ≤ 998 bytes; 7bit: ASCII only).
+   */
   encoding?: 'base64' | 'quoted-printable' | '7bit' | '8bit';
   /** Content-ID for inline images referenced via `cid:` in HTML. */
   cid?: string;
@@ -47,8 +51,8 @@ export interface EmailOptions {
   bcc?: EmailAddress | EmailAddress[];
   /** Display name when `bcc` is a single bare string. */
   bccName?: string;
-  /** Reply-To address. */
-  replyTo?: EmailAddress;
+  /** Reply-To address(es). */
+  replyTo?: EmailAddress | EmailAddress[];
   /** Subject line.  CR/LF stripped to prevent header injection. */
   subject?: string;
   /** Plain-text body. */
@@ -63,6 +67,15 @@ export interface EmailOptions {
   priority?: 'high' | 'normal' | 'low';
   /** Override the generated Message-ID. */
   messageId?: string;
+  /** Message-ID this message replies to (sets `In-Reply-To`). Angle brackets optional. */
+  inReplyTo?: string;
+  /** Thread ancestry (sets `References`), oldest first. Angle brackets optional. */
+  references?: string | string[];
+  /**
+   * Adds `List-Unsubscribe` (+ `List-Unsubscribe-Post` for one-click, RFC 8058).
+   * Required by Gmail/Yahoo for bulk senders; DKIM signs both headers by default.
+   */
+  unsubscribe?: UnsubscribeOptions;
   /** Override the `Date` header.  Defaults to `new Date()`. */
   date?: Date;
   /**
@@ -71,6 +84,23 @@ export interface EmailOptions {
    * enclosing part becomes `multipart/mixed`.
    */
   ical?: ICalEvent;
+  /**
+   * schema.org JSON-LD rendered into the HTML — Gmail highlights (orders, parcel tracking,
+   * reservations), inbox actions and Promotions annotations. Build with `schemaOrg.*` or pass
+   * raw nodes. Needs `html`. Gmail shows most types only for registered senders passing SPF/DKIM.
+   */
+  structuredData?: import('../core/RichContent.js').JsonLd | import('../core/RichContent.js').JsonLd[];
+  /**
+   * Outlook Actionable Message: an Adaptive Card (`type: 'AdaptiveCard'`) with the `originator`
+   * id registered with Microsoft. Rendered into the HTML `<head>`. Needs `html`.
+   */
+  adaptiveCard?: Record<string, unknown>;
+  /**
+   * AMP for Email document (`<html ⚡4email>`), sent as a `text/x-amp-html` part between the
+   * text and html parts. Needs `html` as the fallback. Gmail, Yahoo and Mail.ru render it for
+   * registered senders; everyone else shows the html part.
+   */
+  amp?: string;
 }
 
 /** Options for a template-rendered email. `html` is produced by the template engine. */

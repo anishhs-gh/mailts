@@ -47,7 +47,12 @@ export type {
   QueueStats,
   JobPriority,
   EnqueueOptions,
+  ShutdownOptions,
+  ShutdownResult,
+  ShutdownPendingMode,
 } from './queue.js';
+
+export type { MailAuth, MailAuthType, TokenProvider, TokenContext } from './auth.js';
 
 export type { LogLevel, LogPhase, LogDirection, LogEvent, LogFormat, LoggerOptions } from './logger.js';
 export { LOG_LEVELS } from './logger.js';

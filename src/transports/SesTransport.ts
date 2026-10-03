@@ -1,9 +1,13 @@
 import { createHash, createHmac } from 'crypto';
 import { httpRequest } from './HttpClient.js';
+import { assertOk, parseJson, request } from './utils.js';
 import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
 
+/**
+ * Options for `new SesTransport()`.
+ */
 export interface SesConfig {
   /** AWS region (e.g. `us-east-1`). */
   region: string;
@@ -13,6 +17,8 @@ export interface SesConfig {
   secretAccessKey: string;
   /** Temporary session token (when using STS / instance profiles). */
   sessionToken?: string;
+  /** Endpoint override (VPC endpoints, LocalStack, tests). @default `https://email.<region>.amazonaws.com` */
+  endpoint?: string;
 }
 
 /**
@@ -39,7 +45,8 @@ export class SesTransport implements Transport {
 
   async send(message: BuiltMessage, _options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
     const { region } = this.config;
-    const url = `https://email.${region}.amazonaws.com/v2/email/outbound-emails`;
+    const base = (this.config.endpoint ?? `https://email.${region}.amazonaws.com`).replace(/\/$/, '');
+    const url = `${base}/v2/email/outbound-emails`;
 
     // SES v2 SendEmail with raw content
     const body = JSON.stringify({
@@ -52,32 +59,30 @@ export class SesTransport implements Transport {
 
     const headers = await this.sign('POST', url, body);
 
-    const res = await httpRequest({ method: 'POST', url, headers, body, signal });
+    const res = await request('ses', () => httpRequest({ method: 'POST', url, headers, body, signal }));
+    assertOk('ses', res);
 
-    if (res.status >= 400) {
-      throw new Error(`SES error ${res.status}: ${res.body}`);
-    }
-
-    const data = JSON.parse(res.body) as { MessageId: string };
+    const data = parseJson<{ MessageId: string }>('ses', res);
     return { messageId: `<${data.MessageId}>`, accepted: message.to, rejected: [] };
   }
 
   // ── AWS Signature Version 4 ────────────────────────────────────────────────
 
-  private async sign(
+  /** @internal exposed for tests (deterministic `now`). */
+  async sign(
     method: string,
     urlStr: string,
     body: string,
+    now: Date = new Date(),
   ): Promise<Record<string, string>> {
     const { accessKeyId, secretAccessKey, sessionToken, region } = this.config;
     const service = 'ses';
 
-    const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '').slice(0, 15) + 'Z';
     const dateStamp = amzDate.slice(0, 8);
 
     const url = new URL(urlStr);
-    const host = url.hostname;
+    const host = url.host; // includes a non-default port (endpoint overrides)
 
     const bodyHash = sha256Hex(body);
 
@@ -122,7 +127,8 @@ export class SesTransport implements Transport {
     return { ...headers, Authorization: authHeader };
   }
 
-  private deriveSigningKey(secret: string, date: string, region: string, service: string): Buffer {
+  /** @internal */
+  deriveSigningKey(secret: string, date: string, region: string, service: string): Buffer {
     const kDate    = hmacBuf(Buffer.from(`AWS4${secret}`, 'utf8'), date);
     const kRegion  = hmacBuf(kDate, region);
     const kService = hmacBuf(kRegion, service);

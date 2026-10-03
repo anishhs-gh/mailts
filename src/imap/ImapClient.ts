@@ -1,12 +1,13 @@
 import * as net from 'net';
 import * as tls from 'tls';
 import { EventEmitter } from 'events';
-import { ImapParser, type ImapResponse } from './ImapParser.js';
-import { ImapCmd, type ImapSearchQuery } from './ImapCommands.js';
-import { parseFetchResponse, parseSectionResponse } from './ImapFetch.js';
-import { parseBodyStructure } from './ImapBodyStructure.js';
+import { ImapParser, decodeLatin1Utf8, type ImapResponse } from './ImapParser.js';
+import { ImapParts, checkSection, type ImapSearchQuery } from './ImapCommands.js';
+import { parseFetchAttributes, messageFromAttributes, normalizeSection, type FetchAttributes } from './ImapFetch.js';
+import { Literal, tokenize, tokStr, tokList, tokNum, isNil, uidSets, decodeMailboxName, type CommandPart } from './ImapTokenizer.js';
 import type { BodyNode } from './ImapBodyStructure.js';
-import { Credential } from '../core/Credential.js';
+import { Credential, parseXOAuth2Error } from '../core/Credential.js';
+import { resolveRequireTLS, tlsDefaults } from '../core/net.js';
 import type { Logger } from '../logger/Logger.js';
 import type {
   ImapConfig,
@@ -16,7 +17,7 @@ import type {
   ImapAppendResult,
   ImapStatusResult,
 } from '../types/imap.js';
-import { ImapError } from '../errors.js';
+import { ImapError, ImapAuthError, ImapConnError, LimitError } from '../errors.js';
 
 type ImapState =
   | 'idle'
@@ -26,35 +27,71 @@ type ImapState =
   | 'selected'
   | 'logout';
 
-interface TaggedSlot {
-  resolve: (r: ImapResponse) => void;
-  reject: (e: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+interface RunOptions {
+  /** Timeout without server activity (ms). */
+  timeoutMs?: number;
+  /** Log `[REDACTED]` instead of the command text. */
+  redact?: boolean;
+  /** Called for each `+` continuation not consumed by literal sending. */
+  onContinue?: (r: ImapResponse) => void;
 }
 
-const IDLE_RENEWAL = 28 * 60_000;
+interface Pending {
+  tag: string;
+  label: string;
+  untagged: ImapResponse[];
+  resolve: (r: ImapResponse) => void;
+  reject: (e: Error) => void;
+  onContinue?: (r: ImapResponse) => void;
+  timeoutMs: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
 
+interface RunResult {
+  tagged: ImapResponse;
+  untagged: ImapResponse[];
+}
+
+/**
+ * Re-issue IDLE well inside the 29-minute limit of RFC 2177, and often enough
+ * that NAT gateways and firewalls (commonly 5–15 min) don't drop the connection.
+ */
+const IDLE_RENEWAL = 9 * 60_000;
+/** TCP keepalive probe interval — detects dead peers that never send RST. */
+const TCP_KEEPALIVE = 60_000;
+const LOG_LIMIT = 2_048;
+
+const SPECIAL_USE = new Set(['\\ALL', '\\ARCHIVE', '\\DRAFTS', '\\FLAGGED', '\\JUNK', '\\SENT', '\\TRASH', '\\IMPORTANT']);
+
+/**
+ * Low-level IMAP4rev1 client: one connection, commands serialized, literals
+ * sent with synchronizing (or LITERAL+) semantics, responses parsed from
+ * tokens. For mailbox-aware, reconnecting usage prefer `ImapSession`.
+ *
+ * Events: `close`, `error`, `exists` (count), `expunge` (seq), `fetch` (attrs).
+ */
 export class ImapClient extends EventEmitter {
   private socket: net.Socket | tls.TLSSocket | null = null;
   private parser: ImapParser;
   private state: ImapState = 'idle';
   private tagSeq = 0;
-  private taggedWaiters: Map<string, TaggedSlot> = new Map();
-  private untaggedBuffer: ImapResponse[] = [];
-  private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private idleCallback: ((msg: Partial<ImapMessage>) => void) | null = null;
-  private inIdle = false;
+  private current: Pending | null = null;
+  private unsolicited: ImapResponse[] = [];
   private _selectedMailbox: ImapMailboxStatus | null = null;
+  private closedError: Error | null = null;
 
-  /** Serialization lock — ensures commands do not interleave on the socket. */
+  /** Serialization lock — only one tagged command in flight. */
   private cmdLock: Promise<unknown> = Promise.resolve();
+  /** Wakes the IDLE loop so it sends DONE (set while IDLE is active). */
+  private idleWake: (() => void) | null = null;
+  /** Commands queued behind the lock — IDLE yields to them. */
+  private waitingCommands = 0;
 
-  /** Cached server capabilities (populated by getCapabilities() or after login). */
   private capabilities: Set<string> = new Set();
+  /** Incremented on every capability update. */
+  private capsVersion = 0;
 
-  /** The last mailbox opened via select() or examine(). Null before any selection. */
-  get selectedMailbox(): ImapMailboxStatus | null { return this._selectedMailbox; }
-
+  /** The configuration this client was created with. */
   readonly config: ImapConfig;
   private readonly logger: Logger | null;
 
@@ -62,311 +99,465 @@ export class ImapClient extends EventEmitter {
     super();
     this.config = config;
     this.logger = logger ?? null;
-    this.parser = new ImapParser();
+    this.parser = new ImapParser(config.limits);
+    // An 'error' event with no listener would crash the process — commands
+    // already reject with the same error, so a default no-op listener is safe.
+    this.on('error', () => {});
+  }
+
+  /** The last mailbox opened via select() or examine(). Null before any selection. */
+  get selectedMailbox(): ImapMailboxStatus | null { return this._selectedMailbox; }
+
+  /** `true` while the connection is open and authenticated. */
+  get isConnected(): boolean {
+    return this.socket !== null && !this.socket.destroyed && (this.state === 'authenticated' || this.state === 'selected');
   }
 
   // ─── Connection ────────────────────────────────────────────────────────────
 
+  /** Open the connection, upgrade with STARTTLS when required, and log in. Throws `ImapAuthError` / `ImapConnError`. */
   async connect(): Promise<void> {
     if (this.state !== 'idle') throw new ImapError('Client already connected');
     this.state = 'connecting';
+    this.closedError = null;
 
     const { host, port, secure = true, tls: tlsOpts, connectionTimeout = 10_000 } = this.config;
     const resolvedPort = port ?? (secure ? 993 : 143);
 
-    const socket = secure
-      ? tls.connect(resolvedPort, host, { ...tlsOpts, servername: host })
-      : net.createConnection(resolvedPort, host);
+    try {
+      const socket = await openSocket(host, resolvedPort, secure, tlsOpts, connectionTimeout);
+      this.attach(socket);
 
-    socket.setTimeout(this.config.socketTimeout ?? 30_000);
+      const greeting = await this.waitGreeting(connectionTimeout);
+      if (greeting.status === 'BYE') throw new ImapConnError(`Server rejected connection: ${greeting.data}`);
+      this.state = greeting.status === 'PREAUTH' ? 'authenticated' : 'not_authenticated';
+      this.logger?.info('imap', `Connected to ${host}:${resolvedPort}`);
 
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        socket.destroy();
-        reject(new ImapError('Connection timeout'));
-      }, connectionTimeout);
+      if (!this.capabilities.size) await this.fetchCapabilities();
 
-      const onConnect = () => { clearTimeout(timer); resolve(); };
-
-      if (secure) {
-        (socket as tls.TLSSocket).once('secureConnect', onConnect);
-      } else {
-        socket.once('connect', onConnect);
+      if (!secure && this.state === 'not_authenticated') {
+        if (this.hasCapability('STARTTLS')) {
+          await this.startTls();
+        } else if (resolveRequireTLS(this.config.requireTLS, host)) {
+          throw new ImapError(
+            'IMAP server does not offer STARTTLS; refusing to log in over an unencrypted connection ' +
+            '(set requireTLS: false to allow)', false, 'ETLS',
+          );
+        }
       }
-      socket.once('error', (e) => { clearTimeout(timer); reject(new ImapError(`IMAP connect failed: ${e.message}`)); });
-    });
 
-    this.socket = socket;
-
-    socket.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('binary');
-      this.logger?.proto('S', 'imap', text.replace(/\r\n/g, '↵'));
-      const responses = this.parser.feed(text);
-      for (const r of responses) this.handleResponse(r);
-    });
-
-    socket.on('error', (e) => {
-      this.emit('error', new ImapError(`IMAP socket error: ${e.message}`, true));
-    });
-
-    socket.on('close', () => {
+      if (this.state === 'not_authenticated') await this.authenticate();
+    } catch (err) {
+      this.destroy();
       this.state = 'idle';
-      this.emit('close');
-    });
-
-    const greeting = await this.waitUntagged(['OK', 'PREAUTH', 'BYE'], 10_000);
-    if (greeting.status === 'BYE') throw new ImapError(`Server rejected connection: ${greeting.data}`);
-
-    this.state = greeting.status === 'PREAUTH' ? 'authenticated' : 'not_authenticated';
-    this.logger?.info('imap', `Connected to ${host}:${resolvedPort}`);
-
-    if (this.state === 'not_authenticated') {
-      try {
-        await this.authenticate();
-      } catch (err) {
-        this.socket?.destroy();
-        this.socket = null;
-        this.state = 'idle';
-        throw err;
-      }
+      throw err;
     }
   }
 
-  private async authenticate(): Promise<void> {
-    const auth = this.config.auth;
-    const cred = Credential.from(auth);
+  private attach(socket: net.Socket | tls.TLSSocket): void {
+    this.socket = socket;
+    this.parser = new ImapParser(this.config.limits);
+    socket.setKeepAlive(true, TCP_KEEPALIVE);
 
-    if (auth.type === 'xoauth2') {
-      const payload = cred.buildXOAuth2Payload();
-      const reply = await this.command(`AUTHENTICATE XOAUTH2 ${payload}`);
-      if (reply.status !== 'OK') throw new ImapError(`IMAP XOAUTH2 auth failed: ${reply.data}`);
+    socket.on('data', (chunk: Buffer) => {
+      if (this.current) this.armTimer(this.current);
+      let responses: ImapResponse[];
+      try {
+        responses = this.parser.feed(chunk);
+      } catch (err) {
+        // A limit violation leaves the stream unsynchronised — fail and close.
+        this.closedError = err instanceof LimitError ? err : new ImapConnError(String(err));
+        this.logger?.warn('imap', `Closing connection: ${(err as Error).message}`);
+        socket.destroy();
+        return;
+      }
+      for (const r of responses) {
+        this.logResponse(r);
+        this.handleResponse(r);
+      }
+    });
+    socket.on('error', (e) => {
+      const err = new ImapConnError(`IMAP socket error: ${e.message}`);
+      this.closedError = err;
+      this.emit('error', err);
+    });
+    socket.on('close', () => {
+      if (this.socket !== socket) return; // replaced by STARTTLS upgrade
+      this.onClosed(this.closedError ?? new ImapConnError('IMAP connection closed'));
+    });
+  }
+
+  private onClosed(err: Error): void {
+    this.state = 'idle';
+    this._selectedMailbox = null;
+    this.socket = null;
+    const cur = this.current;
+    this.current = null;
+    if (cur) {
+      if (cur.timer) clearTimeout(cur.timer);
+      cur.reject(err);
+    }
+    this.idleWake?.();
+    this.emit('close');
+  }
+
+  private async startTls(): Promise<void> {
+    await this.run(['STARTTLS']);
+    const raw = this.socket!;
+    raw.removeAllListeners('data');
+    const secured = tls.connect({ ...tlsDefaults(this.config.tls), socket: raw, servername: this.config.host });
+    await new Promise<void>((resolve, reject) => {
+      secured.once('secureConnect', () => resolve());
+      secured.once('error', (e) => reject(new ImapError(`IMAP STARTTLS failed: ${e.message}`, false, 'ETLS')));
+    });
+    this.attach(secured);
+    // RFC 3501 §6.2.1: pre-TLS capabilities must be discarded and re-read
+    this.capabilities.clear();
+    await this.fetchCapabilities();
+    this.logger?.debug('imap', 'Upgraded connection with STARTTLS');
+  }
+
+  private async authenticate(): Promise<void> {
+    const cred = Credential.from(this.config.auth);
+    const capsBefore = this.capsVersion;
+
+    if (cred.type === 'xoauth2') {
+      await this.authXOAuth2(cred, false);
+    } else if (this.hasCapability('LOGINDISABLED')) {
+      if (!this.hasCapability('AUTH=PLAIN')) throw new ImapAuthError('Server disables LOGIN and offers no AUTH=PLAIN');
+      await this.authSasl('PLAIN', cred.buildPlainPayload());
     } else {
-      const loginPayload = cred.buildLoginUser();
-      const passPayload = cred.buildLoginPass();
-      const user = Buffer.from(loginPayload, 'base64').toString('utf8');
-      const pass = Buffer.from(passPayload, 'base64').toString('utf8');
-      const reply = await this.command(ImapCmd.login(user, pass));
-      if (reply.status !== 'OK') throw new ImapError(`IMAP login failed: ${reply.data}`);
+      try {
+        await this.run(ImapParts.login(cred.user, cred.revealPassword()), { redact: true });
+      } catch (err) {
+        throw toAuthError(err, 'IMAP login failed');
+      }
     }
 
     this.state = 'authenticated';
     this.logger?.info('imap', 'Authenticated');
-
-    // Refresh capabilities after auth (server may add/remove post-auth caps)
-    await this.fetchCapabilities();
+    // Capabilities may change after authentication; most servers announce the
+    // new set in the auth reply — ask explicitly only when they did not.
+    if (this.capsVersion === capsBefore) await this.fetchCapabilities();
   }
 
-  // ─── Core command infrastructure ───────────────────────────────────────────
+  private async authXOAuth2(cred: Credential, invalid: boolean): Promise<void> {
+    const token = await cred.resolveToken({ protocol: 'imap', invalid });
+    let challenge: string | undefined;
+    try {
+      await this.authSasl('XOAUTH2', cred.buildXOAuth2Payload(token), (c) => { challenge = c; });
+    } catch (err) {
+      const detail = challenge ? parseXOAuth2Error(challenge) : undefined;
+      if (!invalid && cred.canRefresh && this.socket && !this.socket.destroyed) {
+        this.logger?.debug('imap', 'XOAUTH2 token rejected — refreshing and retrying once');
+        return this.authXOAuth2(cred, true);
+      }
+      const status = detail?.status ? ` (status ${detail.status})` : '';
+      throw toAuthError(err, `IMAP XOAUTH2 authentication failed${status}`);
+    }
+  }
+
+  /**
+   * AUTHENTICATE with an initial response. Uses SASL-IR when advertised,
+   * otherwise waits for the empty challenge. A second challenge is an error
+   * report (e.g. XOAUTH2 JSON) — it is captured and answered with an empty
+   * line so the server completes with a tagged NO instead of hanging.
+   */
+  private async authSasl(mech: string, initial: string, onError?: (challenge: string) => void): Promise<void> {
+    const ir = this.hasCapability('SASL-IR');
+    let sentInitial = ir;
+    await this.run([ir ? `AUTHENTICATE ${mech} ${initial}` : `AUTHENTICATE ${mech}`], {
+      redact: true,
+      onContinue: (r) => {
+        if (!sentInitial) {
+          sentInitial = true;
+          this.write(`${initial}\r\n`);
+        } else {
+          onError?.(r.data);
+          this.write('\r\n');
+        }
+      },
+    });
+  }
+
+  // ─── Command infrastructure ────────────────────────────────────────────────
 
   private nextTag(): string {
     return `M${String(++this.tagSeq).padStart(4, '0')}`;
   }
 
   /**
-   * Serialize fn() through the command lock so only one tagged command is
-   * in-flight at a time.  Prevents response interleaving on the socket.
+   * Serialize fn() through the command lock. If IDLE is active it is woken
+   * first so the queued command can run; the IDLE loop re-enters afterwards.
    */
-  private serialized<T>(fn: () => Promise<T>): Promise<T> {
-    const result = this.cmdLock.then(() => fn());
-    this.cmdLock = result.then(() => {}, () => {});
-    return result as Promise<T>;
-  }
-
-  private command(cmd: string, timeoutMs?: number): Promise<ImapResponse> {
-    return this.serialized(() => this.rawCommand(cmd, timeoutMs));
-  }
-
-  private rawCommand(cmd: string, timeoutMs?: number): Promise<ImapResponse> {
-    const tag = this.nextTag();
-    const full = `${tag} ${cmd}`;
-
-    const logLine = full.includes('LOGIN') || full.includes('AUTHENTICATE')
-      ? `${tag} [REDACTED]`
-      : full;
-
-    this.logger?.proto('C', 'imap', logLine);
-    this.socket!.write(full + '\r\n');
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.taggedWaiters.delete(tag);
-        reject(new ImapError(`IMAP command timeout: ${cmd.split(' ')[0] ?? cmd}`));
-      }, timeoutMs ?? (this.config.socketTimeout ?? 30_000));
-
-      this.taggedWaiters.set(tag, { resolve, reject, timer });
+  private serialized<T>(fn: () => Promise<T>, fromIdle = false): Promise<T> {
+    if (!fromIdle) {
+      this.waitingCommands++;
+      this.idleWake?.();
+    }
+    const result = this.cmdLock.then(() => {
+      if (!fromIdle) this.waitingCommands--;
+      return fn();
     });
+    this.cmdLock = result.then(() => {}, () => {});
+    return result;
+  }
+
+  /** Run a command under the lock. */
+  private command(parts: CommandPart[], opts?: RunOptions): Promise<RunResult> {
+    return this.serialized(() => this.exec(parts, opts));
+  }
+
+  /** Run a command without taking the lock (caller holds it). */
+  private async run(parts: CommandPart[], opts?: RunOptions): Promise<RunResult> {
+    return this.exec(parts, opts);
+  }
+
+  private async exec(parts: CommandPart[], opts: RunOptions = {}): Promise<RunResult> {
+    if (!this.socket || this.socket.destroyed) {
+      throw this.closedError ?? new ImapConnError('IMAP connection is not open');
+    }
+    const tag = this.nextTag();
+    const first = parts[0];
+    const label = typeof first === 'string' ? first.split(' ').slice(0, 2).join(' ') : 'command';
+    let continueWaiter: ((r: ImapResponse | null) => void) | null = null;
+    let settled = false;
+
+    let pending!: Pending;
+    const done = new Promise<ImapResponse>((resolve, reject) => {
+      pending = {
+        tag,
+        label,
+        untagged: [],
+        resolve,
+        reject,
+        timeoutMs: opts.timeoutMs ?? this.config.socketTimeout ?? 30_000,
+        timer: null,
+        onContinue: (r) => {
+          if (continueWaiter) { const w = continueWaiter; continueWaiter = null; w(r); }
+          else opts.onContinue?.(r);
+        },
+      };
+    });
+    // Settled early (e.g. literal refused) — wake a pending literal wait, and make
+    // any later literal in the same command stop instead of waiting forever.
+    const onSettled = () => { settled = true; continueWaiter?.(null); };
+    done.then(onSettled, onSettled);
+    this.current = pending;
+    this.armTimer(pending);
+
+    const nonSync = this.hasCapability('LITERAL+');
+    let line = `${tag} `;
+    let logLine = line;
+    let aborted = false;
+    if (opts.redact) this.logger?.proto('C', 'imap', `${tag} ${label} [REDACTED]`);
+
+    for (const part of joinWithSpaces(parts)) {
+      if (!(part instanceof Literal)) {
+        line += part;
+        logLine += part;
+        continue;
+      }
+      if (settled) { aborted = true; break; } // server already answered (e.g. rejected an earlier literal)
+      const n = part.data.length;
+      line += nonSync ? `{${n}+}` : `{${n}}`;
+      this.write(line + '\r\n');
+      if (!opts.redact) this.logger?.proto('C', 'imap', `${logLine}{${n}}`);
+      line = '';
+      logLine = '';
+      if (!nonSync) {
+        const cont = settled ? null : await new Promise<ImapResponse | null>(r => { continueWaiter = r; });
+        if (cont === null) { aborted = true; break; } // tagged reply instead of "+": literal refused
+      }
+      this.write(part.data);
+      this.logger?.proto('C', 'imap', opts.redact ? '[REDACTED literal]' : `[${n} bytes literal]`);
+    }
+    if (!aborted) {
+      this.write(line + '\r\n');
+      if (!opts.redact && logLine) this.logger?.proto('C', 'imap', logLine);
+    }
+
+    const tagged = await done;
+    return { tagged, untagged: pending.untagged };
+  }
+
+  private write(data: string | Buffer): void {
+    const s = this.socket;
+    if (!s || s.destroyed) throw this.closedError ?? new ImapConnError('IMAP connection is not open');
+    s.write(data);
+  }
+
+  private armTimer(p: Pending): void {
+    if (p.timer) clearTimeout(p.timer);
+    if (p.timeoutMs <= 0) return;
+    p.timer = setTimeout(() => {
+      const err = new ImapConnError(`IMAP command timeout: ${p.label}`);
+      this.closedError = err;
+      // The connection state is unknown after a timeout — it cannot be reused.
+      this.socket?.destroy();
+      if (this.current === p) {
+        this.current = null;
+        p.reject(err);
+      }
+    }, p.timeoutMs);
+    p.timer.unref?.();
   }
 
   private handleResponse(r: ImapResponse): void {
-    if (r.type === 'tagged' && r.tag) {
-      // Auto-capture inline capability response codes: TAG OK [CAPABILITY ...]
-      const capCode = r.data.match(/\[CAPABILITY([^\]]+)\]/i);
-      if (capCode) {
-        for (const cap of capCode[1]!.trim().toUpperCase().split(/\s+/)) {
-          if (cap) this.capabilities.add(cap);
-        }
-      }
-
-      const waiter = this.taggedWaiters.get(r.tag);
-      if (waiter) {
-        clearTimeout(waiter.timer);
-        this.taggedWaiters.delete(r.tag);
-        if (r.status === 'OK') {
-          waiter.resolve(r);
-        } else {
-          waiter.reject(new ImapError(`IMAP ${r.status}: ${r.data}`, r.status === 'NO'));
-        }
-      }
+    if (r.type === 'continuation') {
+      this.current?.onContinue?.(r);
       return;
     }
 
-    // Auto-capture capabilities from untagged CAPABILITY response
-    if (r.type === 'untagged' && r.data.toUpperCase().startsWith('CAPABILITY ')) {
-      this.capabilities = new Set(
-        r.data.slice('CAPABILITY'.length).trim().toUpperCase().split(/\s+/).filter(Boolean),
-      );
+    this.captureCapabilities(r);
+
+    if (r.type === 'tagged') {
+      const cur = this.current;
+      if (!cur || r.tag !== cur.tag) return;
+      if (cur.timer) clearTimeout(cur.timer);
+      this.current = null;
+      if (r.status === 'OK') cur.resolve(r);
+      else cur.reject(toImapError(r));
+      return;
     }
 
-    // Auto-capture inline capability codes from untagged OK: * OK [CAPABILITY ...]
-    if (r.type === 'untagged' && r.status === 'OK') {
-      const capCode = r.data.match(/\[CAPABILITY([^\]]+)\]/i);
-      if (capCode) {
-        for (const cap of capCode[1]!.trim().toUpperCase().split(/\s+/)) {
-          if (cap) this.capabilities.add(cap);
-        }
-      }
+    // Untagged
+    if (r.status === 'BYE' && this.state !== 'logout') {
+      this.closedError = new ImapConnError(`Server closed the connection: ${r.data.replace(/^BYE\s*/i, '')}`);
     }
-
-    this.untaggedBuffer.push(r);
-    this.emit('untagged', r);
-
-    if (this.inIdle && r.data.toUpperCase().includes('EXISTS')) {
-      const seqMatch = r.data.match(/^(\d+)\s+EXISTS/i);
-      if (seqMatch && this.idleCallback) {
-        this.idleCallback({ seq: parseInt(seqMatch[1]!, 10) });
-      }
+    this.emitUnsolicited(r);
+    if (this.current) this.current.untagged.push(r);
+    else {
+      this.unsolicited.push(r);
+      if (this.unsolicited.length > 1_000) this.unsolicited.splice(0, this.unsolicited.length - 1_000);
     }
   }
 
-  private waitUntagged(statuses: string[], timeoutMs: number): Promise<ImapResponse> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.removeListener('untagged', onUntagged);
-        reject(new ImapError('Timeout waiting for IMAP greeting'));
-      }, timeoutMs);
+  private emitUnsolicited(r: ImapResponse): void {
+    const m = /^(\d+)\s+(EXISTS|EXPUNGE|RECENT|FETCH)\b/i.exec(r.data);
+    if (!m) return;
+    const n = Number(m[1]);
+    const kind = m[2]!.toUpperCase();
+    if (kind === 'EXISTS') {
+      if (this._selectedMailbox) this._selectedMailbox.exists = n;
+      this.emit('exists', n);
+    } else if (kind === 'EXPUNGE') {
+      if (this._selectedMailbox && this._selectedMailbox.exists > 0) this._selectedMailbox.exists--;
+      this.emit('expunge', n);
+    } else if (kind === 'FETCH' && (!this.current || this.idleWake)) {
+      const attrs = parseFetchAttributes(r.data);
+      if (attrs) this.emit('fetch', attrs);
+    }
+  }
 
-      const onUntagged = (r: ImapResponse) => {
-        if (r.type === 'untagged' && r.status && statuses.includes(r.status)) {
-          clearTimeout(timer);
-          this.removeListener('untagged', onUntagged);
-          resolve(r);
+  private captureCapabilities(r: ImapResponse): void {
+    const code = /\[CAPABILITY ([^\]]+)\]/i.exec(r.data);
+    let list: string | undefined;
+    if (code) list = code[1];
+    else if (r.type === 'untagged' && /^CAPABILITY\s/i.test(r.data)) list = r.data.slice('CAPABILITY'.length);
+    if (list === undefined) return;
+    this.capabilities = new Set(list.trim().toUpperCase().split(/\s+/).filter(Boolean));
+    this.capsVersion++;
+  }
+
+  private logResponse(r: ImapResponse): void {
+    if (!this.logger) return;
+    const raw = r.raw.length > LOG_LIMIT ? `${r.raw.slice(0, LOG_LIMIT)}… [+${r.raw.length - LOG_LIMIT} bytes]` : r.raw;
+    this.logger.proto('S', 'imap', raw.replace(/\r\n/g, '↵'));
+  }
+
+  private waitGreeting(timeoutMs: number): Promise<ImapResponse> {
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        const g = this.unsolicited.find(r => r.status === 'OK' || r.status === 'PREAUTH' || r.status === 'BYE');
+        if (g) {
+          cleanup();
+          this.unsolicited = [];
+          resolve(g);
         }
       };
-
-      this.on('untagged', onUntagged);
-    });
-  }
-
-  private waitContinuation(timeoutMs: number): Promise<ImapResponse> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.off('untagged', onMsg);
-        reject(new ImapError('Timeout waiting for IMAP continuation'));
-      }, timeoutMs);
-
-      const onMsg = (r: ImapResponse) => {
-        if (r.type === 'continuation') {
-          clearTimeout(timer);
-          this.off('untagged', onMsg);
-          resolve(r);
-        }
+      const onClose = () => { cleanup(); reject(this.closedError ?? new ImapConnError('Connection closed before greeting')); };
+      const timer = setTimeout(() => { cleanup(); reject(new ImapConnError('Timeout waiting for IMAP greeting')); }, timeoutMs);
+      const socket = this.socket!;
+      const onData = () => check();
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.off('data', onData);
+        this.off('close', onClose);
       };
-
-      this.on('untagged', onMsg);
+      socket.on('data', onData);
+      this.once('close', onClose);
+      check();
     });
-  }
-
-  private registerTaggedWaiter(tag: string, timeoutMs: number): Promise<ImapResponse> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.taggedWaiters.delete(tag);
-        reject(new ImapError(`IMAP command timeout: APPEND`));
-      }, timeoutMs);
-      this.taggedWaiters.set(tag, { resolve, reject, timer });
-    });
-  }
-
-  private clearUntagged(): void {
-    this.untaggedBuffer = [];
   }
 
   // ─── Capabilities ──────────────────────────────────────────────────────────
 
   private async fetchCapabilities(): Promise<void> {
-    this.clearUntagged();
-    await this.rawCommand(ImapCmd.capability());
-    const capResp = this.untaggedBuffer.find(r => r.data.toUpperCase().startsWith('CAPABILITY'));
-    if (capResp) {
-      this.capabilities = new Set(
-        capResp.data.slice('CAPABILITY'.length).trim().toUpperCase().split(/\s+/)
-      );
-    }
+    const { untagged } = await this.run(['CAPABILITY']);
+    const r = untagged.find(x => /^CAPABILITY\s/i.test(x.data));
+    if (r) this.captureCapabilities(r);
   }
 
+  /** Server capabilities (upper-case), refreshed from the server when not yet known. */
   async getCapabilities(): Promise<Set<string>> {
-    await this.fetchCapabilities();
+    await this.serialized(() => this.fetchCapabilities());
     return new Set(this.capabilities);
   }
 
+  /** `true` when the server advertised `cap` (case-insensitive), e.g. `'IDLE'`, `'MOVE'`, `'UIDPLUS'`. */
   hasCapability(cap: string): boolean {
     return this.capabilities.has(cap.toUpperCase());
   }
 
+  /** NOOP — keeps the connection alive and collects pending updates. */
+  async noop(): Promise<void> {
+    await this.command(['NOOP']);
+  }
+
+  // ─── Mailbox listing ───────────────────────────────────────────────────────
+
+  /** LIST mailboxes matching `pattern` (`*` = all levels, `%` = one level) under `ref`. */
+  async list(ref = '', pattern = '*'): Promise<ImapListEntry[]> {
+    const extended = this.hasCapability('SPECIAL-USE') && this.hasCapability('LIST-EXTENDED');
+    const { untagged } = await this.command(ImapParts.list(ref, pattern, extended));
+    return untagged.filter(r => /^LIST\s/i.test(r.data)).map(r => parseListResponse(r.data));
+  }
+
+  /** LSUB: subscribed mailboxes matching `pattern`. */
+  async listSubscribed(ref = '', pattern = '*'): Promise<ImapListEntry[]> {
+    const { untagged } = await this.command(ImapParts.lsub(ref, pattern));
+    return untagged.filter(r => /^LSUB\s/i.test(r.data)).map(r => parseListResponse(r.data));
+  }
+
   // ─── Mailbox selection ─────────────────────────────────────────────────────
 
-  async list(ref = '', pattern = '*'): Promise<ImapListEntry[]> {
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.list(ref, pattern));
-      return this.untaggedBuffer
-        .filter(r => r.data.toUpperCase().startsWith('LIST'))
-        .map(r => parseListResponse(r.data));
-    });
-  }
-
-  async listSubscribed(ref = '', pattern = '*'): Promise<ImapListEntry[]> {
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.lsub(ref, pattern));
-      return this.untaggedBuffer
-        .filter(r => r.data.toUpperCase().startsWith('LSUB'))
-        .map(r => parseListResponse(r.data, 'LSUB'));
-    });
-  }
-
+  /** SELECT `mailbox` read-write; later commands act on it. */
   async select(mailbox: string): Promise<ImapMailboxStatus> {
-    if (this.state !== 'authenticated' && this.state !== 'selected') {
-      throw new ImapError('Must be authenticated to select a mailbox');
-    }
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.select(mailbox));
-      const status = this.buildMailboxStatus(mailbox, false);
-      this._selectedMailbox = status;
-      this.state = 'selected';
-      return status;
-    });
+    return this.openMailbox(mailbox, false);
   }
 
   /** Open mailbox read-only (EXAMINE). Does not allow flag changes. */
   async examine(mailbox: string): Promise<ImapMailboxStatus> {
+    return this.openMailbox(mailbox, true);
+  }
+
+  private async openMailbox(mailbox: string, readOnly: boolean): Promise<ImapMailboxStatus> {
     if (this.state !== 'authenticated' && this.state !== 'selected') {
-      throw new ImapError('Must be authenticated to examine a mailbox');
+      throw new ImapError(`Must be authenticated to ${readOnly ? 'examine' : 'select'} a mailbox`);
     }
     return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.examine(mailbox));
-      const status = this.buildMailboxStatus(mailbox, true);
+      this._selectedMailbox = null;
+      const parts = readOnly ? ImapParts.examine(mailbox) : ImapParts.select(mailbox, this.hasCapability('CONDSTORE'));
+      let res: RunResult;
+      try {
+        res = await this.run(parts);
+      } catch (err) {
+        if (this.state === 'selected') this.state = 'authenticated'; // failed SELECT deselects (RFC 3501 §6.3.1)
+        throw err;
+      }
+      const { tagged, untagged } = res;
+      const status = buildMailboxStatus(mailbox, readOnly, untagged, tagged);
       this._selectedMailbox = status;
       this.state = 'selected';
       return status;
@@ -378,131 +569,111 @@ export class ImapClient extends EventEmitter {
     mailbox: string,
     items: string[] = ['MESSAGES', 'RECENT', 'UNSEEN', 'UIDNEXT', 'UIDVALIDITY'],
   ): Promise<ImapStatusResult> {
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.status(mailbox, items));
-      const r = this.untaggedBuffer.find(x => x.data.toUpperCase().startsWith('STATUS'));
-      return r ? parseStatusResponse(r.data) : {};
-    });
+    const { untagged } = await this.command(ImapParts.status(mailbox, items));
+    const r = untagged.find(x => /^STATUS\s/i.test(x.data));
+    return r ? parseStatusResponse(r.data) : {};
   }
 
   // ─── Mailbox management ────────────────────────────────────────────────────
 
+  /** CREATE a mailbox (non-ASCII names are encoded automatically). */
   async createMailbox(mailbox: string): Promise<void> {
-    await this.command(ImapCmd.create(mailbox));
+    await this.command(ImapParts.create(mailbox));
   }
 
+  /** DELETE a mailbox and its messages. */
   async deleteMailbox(mailbox: string): Promise<void> {
-    await this.command(ImapCmd.delete(mailbox));
+    await this.command(ImapParts.delete(mailbox));
   }
 
+  /** RENAME a mailbox. */
   async renameMailbox(from: string, to: string): Promise<void> {
-    await this.command(ImapCmd.rename(from, to));
+    await this.command(ImapParts.rename(from, to));
   }
 
+  /** SUBSCRIBE to a mailbox. */
   async subscribe(mailbox: string): Promise<void> {
-    await this.command(ImapCmd.subscribe(mailbox));
+    await this.command(ImapParts.subscribe(mailbox));
   }
 
+  /** UNSUBSCRIBE from a mailbox. */
   async unsubscribe(mailbox: string): Promise<void> {
-    await this.command(ImapCmd.unsubscribe(mailbox));
+    await this.command(ImapParts.unsubscribe(mailbox));
   }
 
   // ─── Search ────────────────────────────────────────────────────────────────
 
+  /** UID SEARCH in the selected mailbox; returns matching UIDs. */
   async search(query: ImapSearchQuery): Promise<number[]> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.uidSearch(query));
-      const searchResp = this.untaggedBuffer.find(r => r.data.toUpperCase().startsWith('SEARCH'));
-      if (!searchResp) return [];
-      return searchResp.data.slice(7).trim().split(/\s+/).filter(Boolean).map(Number);
-    });
+    this.requireSelected();
+    const { untagged } = await this.command(ImapParts.uidSearch(query));
+    const uids: number[] = [];
+    for (const r of untagged) {
+      if (!/^SEARCH\b/i.test(r.data)) continue;
+      for (const t of tokenize(r.data.slice(6))) {
+        const n = tokNum(t);
+        if (n !== undefined) uids.push(n);
+      }
+    }
+    return uids;
   }
 
   // ─── Fetch ─────────────────────────────────────────────────────────────────
 
-  async fetch(uids: number[], items = 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE'): Promise<ImapMessage[]> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
+  /** UID FETCH arbitrary items; large UID lists are split into several commands. */
+  async fetchAttributes(uids: number[], items: string): Promise<FetchAttributes[]> {
+    this.requireSelected();
     if (uids.length === 0) return [];
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.uidFetch(uids.join(','), items));
-      return this.collectFetchResults();
-    });
-  }
-
-  /**
-   * Fetch BODYSTRUCTURE for a set of UIDs.
-   * Returns a map of UID → parsed BodyNode tree.
-   */
-  async fetchBodyStructure(uids: number[]): Promise<Map<number, BodyNode>> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-    if (uids.length === 0) return new Map();
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.uidFetchBodyStructure(uids.join(',')));
-      const result = new Map<number, BodyNode>();
-      for (const r of this.untaggedBuffer) {
-        if (!/FETCH/i.test(r.data)) continue;
-        const uidMatch = r.data.match(/\bUID\s+(\d+)/i);
-        const bsMatch = r.data.match(/\bBODYSTRUCTURE\s+(\([\s\S]+)/i);
-        if (!uidMatch || !bsMatch) continue;
-        const uid = parseInt(uidMatch[1]!, 10);
-        try {
-          result.set(uid, parseBodyStructure(bsMatch[1]!));
-        } catch { /* malformed — skip */ }
+    const out: FetchAttributes[] = [];
+    for (const set of uidSets(uids)) {
+      const { untagged } = await this.command(ImapParts.uidFetch(set, items));
+      for (const r of untagged) {
+        const a = parseFetchAttributes(r.data);
+        if (a && a.uid !== undefined) out.push(a);
       }
-      return result;
-    });
+    }
+    return mergeByUid(out);
+  }
+
+  /** UID FETCH `items` for `uids` in the selected mailbox. Never sets `\\Seen` unless `items` asks for a non-PEEK body. */
+  async fetch(uids: number[], items = 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE'): Promise<ImapMessage[]> {
+    const attrs = await this.fetchAttributes(uids, items);
+    return attrs.map(a => buildFullMessage(messageFromAttributes(a)));
+  }
+
+  /** Fetch BODYSTRUCTURE for a set of UIDs. Returns a map of UID → parsed BodyNode tree. */
+  async fetchBodyStructure(uids: number[]): Promise<Map<number, BodyNode>> {
+    const attrs = await this.fetchAttributes(uids, 'UID BODYSTRUCTURE');
+    const result = new Map<number, BodyNode>();
+    for (const a of attrs) if (a.bodyStructure) result.set(a.uid!, a.bodyStructure);
+    return result;
   }
 
   /**
-   * Fetch a single body section for a UID as raw bytes.
-   * Uses BODY.PEEK so it never sets \\Seen.
+   * Fetch a single body section for a UID as raw bytes (still transfer-encoded).
+   * Uses BODY.PEEK so it never sets \\Seen. `''` returns the full RFC 5322 message.
    */
   async fetchSection(uid: number, section: string): Promise<Buffer> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.uidFetchSection(String(uid), section));
-      for (const r of this.untaggedBuffer) {
-        const buf = parseSectionResponse(r.data, section);
-        if (buf !== null) return buf;
-      }
-      return Buffer.alloc(0);
-    });
+    const map = await this.fetchSections([uid], [section]);
+    return map.get(uid)?.get(section) ?? Buffer.alloc(0);
   }
 
-  /**
-   * Fetch multiple body sections for a set of UIDs in one round-trip.
-   * Returns a map of UID → (section → raw bytes).
-   */
-  async fetchSections(
-    uids: number[],
-    sections: string[],
-  ): Promise<Map<number, Map<string, Buffer>>> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
+  /** Fetch multiple body sections for a set of UIDs. Returns UID → (section → raw bytes). */
+  async fetchSections(uids: number[], sections: string[]): Promise<Map<number, Map<string, Buffer>>> {
     if (uids.length === 0 || sections.length === 0) return new Map();
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.uidFetchSections(uids.join(','), sections));
-      const result = new Map<number, Map<string, Buffer>>();
-      for (const r of this.untaggedBuffer) {
-        if (!/FETCH/i.test(r.data)) continue;
-        const uidMatch = r.data.match(/\bUID\s+(\d+)/i);
-        if (!uidMatch) continue;
-        const uid = parseInt(uidMatch[1]!, 10);
-        if (!result.has(uid)) result.set(uid, new Map());
-        const sectionMap = result.get(uid)!;
-        for (const section of sections) {
-          const buf = parseSectionResponse(r.data, section);
-          if (buf !== null) sectionMap.set(section, buf);
-        }
+    for (const s of sections) checkSection(s);
+    const items = `UID ${sections.map(s => `BODY.PEEK[${s}]`).join(' ')}`;
+    const attrs = await this.fetchAttributes(uids, items);
+    const result = new Map<number, Map<string, Buffer>>();
+    for (const a of attrs) {
+      const m = new Map<string, Buffer>();
+      for (const s of sections) {
+        const buf = a.sections.get(normalizeSection(s));
+        if (buf !== undefined) m.set(s, buf);
       }
-      return result;
-    });
+      result.set(a.uid!, m);
+    }
+    return result;
   }
 
   /** Fetch messages modified since `modseq` (requires CONDSTORE capability). */
@@ -511,58 +682,45 @@ export class ImapClient extends EventEmitter {
     modseq: number,
     items = 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE MODSEQ',
   ): Promise<ImapMessage[]> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-    return this.serialized(async () => {
-      this.clearUntagged();
-      await this.rawCommand(ImapCmd.uidFetchChangedSince(uids, items, modseq));
-      return this.collectFetchResults();
-    });
-  }
-
-  private collectFetchResults(): ImapMessage[] {
-    const messages: ImapMessage[] = [];
-    for (const r of this.untaggedBuffer) {
-      const seqMatch = r.data.match(/^(\d+)\s+FETCH\s+/i);
-      if (!seqMatch) continue;
-      const seq = parseInt(seqMatch[1]!, 10);
-      const partial = parseFetchResponse(seq, r.data);
-      messages.push(buildFullMessage(partial));
-    }
-    return messages;
+    this.requireSelected();
+    const { untagged } = await this.command(ImapParts.uidFetchChangedSince(uids, items, modseq));
+    const attrs = untagged.map(r => parseFetchAttributes(r.data)).filter((a): a is FetchAttributes => a !== null);
+    return mergeByUid(attrs).map(a => buildFullMessage(messageFromAttributes(a)));
   }
 
   // ─── Store / Flags ─────────────────────────────────────────────────────────
 
+  /** Add (`add: true`) or remove `flags` on `uids` (UID STORE). */
   async setFlags(uids: number[], flags: string[], add: boolean): Promise<void> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-    await this.command(ImapCmd.uidStore(uids.join(','), flags, add));
+    this.requireSelected();
+    for (const set of uidSets(uids)) await this.command(ImapParts.uidStore(set, flags, add));
   }
 
+  /** Like `setFlags()` with `.SILENT` — the server does not echo the new flags. */
   async setFlagsSilent(uids: number[], flags: string[], add: boolean): Promise<void> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-    await this.command(ImapCmd.uidStoreSilent(uids.join(','), flags, add));
+    this.requireSelected();
+    for (const set of uidSets(uids)) await this.command(ImapParts.uidStore(set, flags, add, true));
   }
 
   // ─── Copy / Move ───────────────────────────────────────────────────────────
 
+  /** UID COPY `uids` to `destMailbox`. */
   async copy(uids: number[], destMailbox: string): Promise<void> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-    await this.command(ImapCmd.uidCopy(uids.join(','), destMailbox));
+    this.requireSelected();
+    for (const set of uidSets(uids)) await this.command(ImapParts.uidCopy(set, destMailbox));
   }
 
   /**
-   * Move UIDs to another mailbox.  Uses UID MOVE (RFC 6851) if the server
-   * supports MOVE; otherwise falls back to COPY + store \\Deleted + EXPUNGE.
+   * Move UIDs to another mailbox. Uses UID MOVE (RFC 6851) when supported;
+   * otherwise COPY + \\Deleted + UID EXPUNGE (UIDPLUS) — or a plain EXPUNGE,
+   * which also removes other messages already flagged \\Deleted.
    */
   async move(uids: number[], destMailbox: string): Promise<void> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-
+    this.requireSelected();
     if (this.hasCapability('MOVE')) {
-      await this.command(ImapCmd.uidMove(uids.join(','), destMailbox));
+      for (const set of uidSets(uids)) await this.command(ImapParts.uidMove(set, destMailbox));
       return;
     }
-
-    // Fallback: copy, mark deleted, expunge
     await this.copy(uids, destMailbox);
     await this.setFlagsSilent(uids, ['\\Deleted'], true);
     await this.expungeUids(uids);
@@ -570,16 +728,19 @@ export class ImapClient extends EventEmitter {
 
   // ─── Expunge ───────────────────────────────────────────────────────────────
 
+  /** EXPUNGE: permanently remove every `\\Deleted` message in the selected mailbox. */
   async expunge(): Promise<void> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
-    await this.command(ImapCmd.expunge());
+    this.requireSelected();
+    await this.command(['EXPUNGE']);
   }
 
+  /** Remove only these `\\Deleted` messages (UID EXPUNGE). Falls back to `expunge()` without UIDPLUS. */
   async expungeUids(uids: number[]): Promise<void> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
+    this.requireSelected();
     if (this.hasCapability('UIDPLUS')) {
-      await this.command(ImapCmd.uidExpunge(uids.join(',')));
+      for (const set of uidSets(uids)) await this.command(ImapParts.uidExpunge(set));
     } else {
+      this.logger?.warn('imap', 'Server lacks UIDPLUS — EXPUNGE removes every \\Deleted message in the mailbox');
       await this.expunge();
     }
   }
@@ -587,7 +748,7 @@ export class ImapClient extends EventEmitter {
   // ─── Append ────────────────────────────────────────────────────────────────
 
   /**
-   * Append a raw RFC 5322 message to a mailbox using IMAP literal protocol.
+   * Append a raw RFC 5322 message to a mailbox.
    * Returns APPENDUID values when supported by the server (UIDPLUS capability).
    */
   async append(
@@ -596,153 +757,249 @@ export class ImapClient extends EventEmitter {
     flags: string[] = [],
     internalDate?: Date,
   ): Promise<ImapAppendResult> {
-    return this.serialized(async () => {
-      const buf = typeof raw === 'string' ? Buffer.from(raw) : raw;
-      const prefix = ImapCmd.appendPrefix(mailbox, flags, internalDate);
-      const tag = this.nextTag();
-      const cmdLine = `${tag} ${prefix} {${buf.length}}`;
-
-      this.logger?.proto('C', 'imap', cmdLine);
-      this.socket!.write(cmdLine + '\r\n');
-
-      // Wait for server continuation prompt (+)
-      await this.waitContinuation(this.config.socketTimeout ?? 30_000);
-
-      // Register tagged waiter BEFORE sending data
-      const replyP = this.registerTaggedWaiter(tag, this.config.socketTimeout ?? 30_000);
-
-      this.logger?.proto('C', 'imap', `[${buf.length} bytes literal]`);
-      this.socket!.write(buf);
-      this.socket!.write('\r\n');
-
-      const reply = await replyP;
-      if (reply.status !== 'OK') throw new ImapError(`APPEND failed: ${reply.data}`);
-
-      return parseAppendUid(reply.data);
+    const buf = typeof raw === 'string' ? Buffer.from(raw, 'utf8') : raw;
+    const { tagged } = await this.command(ImapParts.append(mailbox, flags, buf, internalDate), {
+      timeoutMs: Math.max(this.config.socketTimeout ?? 30_000, 60_000),
     });
+    return parseAppendUid(tagged.data);
   }
 
   // ─── IDLE ──────────────────────────────────────────────────────────────────
 
-  async idle(onNew: (msg: Partial<ImapMessage>) => void): Promise<() => Promise<void>> {
-    if (this.state !== 'selected') throw new ImapError('No mailbox selected for IDLE');
-    this.idleCallback = onNew;
+  /**
+   * Enter IDLE (RFC 2177) on the selected mailbox. `onNew` fires with the new
+   * message count (`seq`) on EXISTS; subscribe to the `exists` / `expunge` /
+   * `fetch` events for full detail.
+   *
+   * IDLE is renewed every 28 minutes. Other commands issued meanwhile wake the
+   * IDLE loop, run, and IDLE resumes. Returns a function that exits IDLE.
+   */
+  async idle(onNew?: (msg: Partial<ImapMessage>) => void): Promise<() => Promise<void>> {
+    this.requireSelected();
+    if (this.idleWake) throw new ImapError('IDLE is already active');
+    if (!this.hasCapability('IDLE')) this.logger?.warn('imap', 'Server does not advertise IDLE');
 
-    const enterIdle = async () => {
-      const tag = this.nextTag();
-      this.logger?.proto('C', 'imap', `${tag} IDLE`);
-      this.socket!.write(`${tag} IDLE\r\n`);
-      this.inIdle = true;
+    let stopped = false;
+    const onExists = (n: number) => onNew?.({ seq: n });
+    this.on('exists', onExists);
 
-      this.idleTimer = setTimeout(async () => {
-        await this.stopIdle(tag);
-        await enterIdle();
-      }, IDLE_RENEWAL);
-    };
+    let entered!: () => void;
+    let enterFailed!: (e: Error) => void;
+    const firstEntry = new Promise<void>((res, rej) => { entered = res; enterFailed = rej; });
+    let first = true;
 
-    await enterIdle();
+    const loop = (async () => {
+      while (!stopped && this.socket && !this.socket.destroyed) {
+        await this.serialized(() => this.idleOnce(() => {
+          if (first) { first = false; entered(); }
+        }, () => stopped), true);
+      }
+    })();
+    loop.catch((e: Error) => {
+      if (first) { enterFailed(e); return; }
+      // IDLE broke after it started (server error, timeout): the connection state is
+      // unknown — close it so watchers see 'close' and reconnect instead of stalling.
+      if (!stopped) {
+        this.logger?.warn('imap', `IDLE ended unexpectedly: ${e.message}`);
+        this.emit('error', e);
+        this.destroy();
+      }
+    });
 
+    await firstEntry;
     return async () => {
-      if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
-      this.idleCallback = null;
-      this.inIdle = false;
-      this.logger?.proto('C', 'imap', 'DONE');
-      this.socket!.write('DONE\r\n');
+      stopped = true;
+      this.off('exists', onExists);
+      this.idleWake?.();
+      await loop.catch(() => {});
     };
   }
 
-  private async stopIdle(tag: string): Promise<void> {
-    this.inIdle = false;
-    this.logger?.proto('C', 'imap', 'DONE');
-    this.socket!.write('DONE\r\n');
-    await new Promise<void>(resolve => {
-      const onTagged = (r: ImapResponse) => {
-        if (r.type === 'tagged' && r.tag === tag) {
-          this.removeListener('untagged', onTagged);
-          resolve();
-        }
-      };
-      this.on('untagged', onTagged);
-      setTimeout(resolve, 5_000);
+  /** One IDLE cycle: IDLE → wait for wake/renewal → DONE → tagged OK. Holds the lock. */
+  private async idleOnce(onEntered: () => void, shouldExit: () => boolean): Promise<void> {
+    if (shouldExit()) return;
+    let wake!: () => void;
+    const woken = new Promise<void>(r => { wake = r; });
+    let wasEntered = false;
+    const renewal = setTimeout(() => wake(), this.config.idleRenewalMs ?? IDLE_RENEWAL);
+    renewal.unref?.();
+
+    const run = this.exec(['IDLE'], {
+      timeoutMs: 0, // IDLE is silent by design
+      onContinue: () => {
+        wasEntered = true;
+        this.idleWake = () => { this.idleWake = null; wake(); };
+        onEntered();
+        // A stop or a command may have been requested before the server confirmed IDLE
+        if (this.waitingCommands > 0 || shouldExit()) this.idleWake();
+      },
     });
+
+    try {
+      await Promise.race([woken, run]);
+      if (wasEntered && this.socket && !this.socket.destroyed) {
+        this.logger?.proto('C', 'imap', 'DONE');
+        this.write('DONE\r\n');
+        // From here the server must answer promptly; a silent peer means a dead connection.
+        const cur = this.current;
+        if (cur) { cur.timeoutMs = this.config.socketTimeout ?? 30_000; this.armTimer(cur); }
+      }
+      await run;
+    } finally {
+      clearTimeout(renewal);
+      this.idleWake = null;
+    }
   }
 
   // ─── Close ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Log out and close the connection. Uses LOGOUT only (not CLOSE, which
+   * would silently expunge messages flagged \\Deleted).
+   */
   async close(): Promise<void> {
-    if (this.state === 'selected') {
-      try { await this.command(ImapCmd.close()); } catch { /* ignore */ }
+    if (this.socket && !this.socket.destroyed) {
+      try {
+        await this.serialized(async () => {
+          this.state = 'logout';
+          await this.exec(['LOGOUT'], { timeoutMs: 5_000 });
+        });
+      } catch { /* ignore */ }
     }
-    try { await this.command(ImapCmd.logout()); } catch { /* ignore */ }
-    this.socket?.destroy();
+    this.destroy();
     this.state = 'logout';
   }
 
-  // ─── Internal helpers ──────────────────────────────────────────────────────
+  /** Destroy the socket immediately. Pending commands reject with `ImapConnError`. */
+  destroy(): void {
+    this.socket?.destroy();
+  }
 
-  private buildMailboxStatus(name: string, readOnly: boolean): ImapMailboxStatus {
-    const status: ImapMailboxStatus = {
-      name,
-      flags: [],
-      exists: 0,
-      recent: 0,
-      unseen: 0,
-      uidValidity: 0,
-      uidNext: 0,
-      readOnly,
-    };
+  // ─── Helpers ───────────────────────────────────────────────────────────────
 
-    for (const r of this.untaggedBuffer) {
-      const upper = r.data.toUpperCase();
-      if (upper.startsWith('FLAGS')) {
-        const m = r.data.match(/\(([^)]*)\)/);
-        status.flags = m ? m[1]!.split(/\s+/).filter(Boolean) : [];
-      } else if (/^\d+\s+EXISTS/.test(r.data)) {
-        status.exists = parseInt(r.data, 10);
-      } else if (/^\d+\s+RECENT/.test(r.data)) {
-        status.recent = parseInt(r.data, 10);
-      } else if (upper.includes('[UNSEEN')) {
-        const m = r.data.match(/\[UNSEEN\s+(\d+)\]/i);
-        if (m) status.unseen = parseInt(m[1]!, 10);
-      } else if (upper.includes('[UIDVALIDITY')) {
-        const m = r.data.match(/\[UIDVALIDITY\s+(\d+)\]/i);
-        if (m) status.uidValidity = parseInt(m[1]!, 10);
-      } else if (upper.includes('[UIDNEXT')) {
-        const m = r.data.match(/\[UIDNEXT\s+(\d+)\]/i);
-        if (m) status.uidNext = parseInt(m[1]!, 10);
-      } else if (upper.includes('[READ-ONLY]')) {
-        status.readOnly = true;
-      } else if (upper.includes('[HIGHESTMODSEQ')) {
-        const m = r.data.match(/\[HIGHESTMODSEQ\s+(\d+)\]/i);
-        if (m) status.highestModSeq = parseInt(m[1]!, 10);
-      }
-    }
-
-    return status;
+  private requireSelected(): void {
+    if (this.state !== 'selected') throw new ImapError('No mailbox selected');
   }
 }
 
-// ─── Parsing helpers ──────────────────────────────────────────────────────────
+// ─── Socket ──────────────────────────────────────────────────────────────────
 
-function parseListResponse(data: string, keyword = 'LIST'): ImapListEntry {
-  const re = new RegExp(`^${keyword}\\s+\\(([^)]*)\\)\\s+"([^"]+)"\\s+"?([^"\\s]+)"?`, 'i');
-  const m = data.match(re);
-  return {
-    flags: m ? m[1]!.split(/\s+/).filter(Boolean) : [],
-    delimiter: m ? m[2]! : '/',
-    name: m ? m[3]! : data,
+function openSocket(
+  host: string,
+  port: number,
+  secure: boolean,
+  tlsOpts: tls.ConnectionOptions | undefined,
+  timeoutMs: number,
+): Promise<net.Socket | tls.TLSSocket> {
+  return new Promise((resolve, reject) => {
+    const socket = secure
+      ? tls.connect(port, host, { ...tlsDefaults(tlsOpts), servername: host })
+      : net.createConnection(port, host);
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new ImapConnError('Connection timeout'));
+    }, timeoutMs);
+    const ok = () => { clearTimeout(timer); socket.off('error', fail); resolve(socket); };
+    const fail = (e: Error) => { clearTimeout(timer); reject(new ImapConnError(`IMAP connect failed: ${e.message}`)); };
+    socket.once(secure ? 'secureConnect' : 'connect', ok);
+    socket.once('error', fail);
+  });
+}
+
+function joinWithSpaces(parts: CommandPart[]): CommandPart[] {
+  const out: CommandPart[] = [];
+  parts.forEach((p, i) => {
+    if (i > 0) {
+      const prev = parts[i - 1]!;
+      const glue = (typeof prev === 'string' && prev.endsWith('(')) || (typeof p === 'string' && p.startsWith(')'));
+      if (!glue) out.push(' ');
+    }
+    out.push(p);
+  });
+  // Merge adjacent strings
+  const merged: CommandPart[] = [];
+  for (const p of out) {
+    const last = merged[merged.length - 1];
+    if (typeof p === 'string' && typeof last === 'string') merged[merged.length - 1] = last + p;
+    else merged.push(p);
+  }
+  return merged;
+}
+
+// ─── Parsing helpers ─────────────────────────────────────────────────────────
+
+function toImapError(r: ImapResponse): ImapError {
+  const code = /^\[([A-Z0-9-]+)/i.exec(r.data)?.[1]?.toUpperCase();
+  if (code === 'AUTHENTICATIONFAILED' || code === 'AUTHORIZATIONFAILED') {
+    return new ImapAuthError(`IMAP ${r.status}: ${r.data}`, code);
+  }
+  const retryable = code === 'UNAVAILABLE' || code === 'INUSE' || code === 'LIMIT' || code === 'SERVERBUG';
+  return new ImapError(`IMAP ${r.status}: ${r.data}`, retryable, 'EIMAP', code);
+}
+
+function toAuthError(err: unknown, prefix: string): Error {
+  if (err instanceof ImapConnError) return err;
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = err instanceof ImapError ? err.responseCode : undefined;
+  return new ImapAuthError(`${prefix}: ${msg}`, code);
+}
+
+function buildMailboxStatus(
+  name: string,
+  readOnly: boolean,
+  untagged: ImapResponse[],
+  tagged: ImapResponse,
+): ImapMailboxStatus {
+  const status: ImapMailboxStatus = {
+    name,
+    flags: [],
+    exists: 0,
+    recent: 0,
+    uidValidity: 0,
+    uidNext: 0,
+    readOnly,
   };
+
+  for (const r of untagged) {
+    const d = r.data;
+    let m: RegExpExecArray | null;
+    if ((m = /^(\d+)\s+EXISTS\b/i.exec(d))) status.exists = Number(m[1]);
+    else if ((m = /^(\d+)\s+RECENT\b/i.exec(d))) status.recent = Number(m[1]);
+    else if (/^FLAGS\s/i.test(d)) {
+      status.flags = (tokList(tokenize(d.slice(5))[0]) ?? []).map(t => tokStr(t) ?? '').filter(Boolean);
+    } else if (r.status === 'OK') {
+      if ((m = /\[UNSEEN\s+(\d+)\]/i.exec(d))) status.firstUnseen = Number(m[1]);
+      else if ((m = /\[UIDVALIDITY\s+(\d+)\]/i.exec(d))) status.uidValidity = Number(m[1]);
+      else if ((m = /\[UIDNEXT\s+(\d+)\]/i.exec(d))) status.uidNext = Number(m[1]);
+      else if ((m = /\[HIGHESTMODSEQ\s+(\d+)\]/i.exec(d))) status.highestModSeq = Number(m[1]);
+      else if ((m = /\[PERMANENTFLAGS\s+\(([^)]*)\)\]/i.exec(d))) status.permanentFlags = m[1]!.split(/\s+/).filter(Boolean);
+    }
+  }
+  if (/\[READ-ONLY\]/i.test(tagged.data)) status.readOnly = true;
+  else if (/\[READ-WRITE\]/i.test(tagged.data)) status.readOnly = false;
+  return status;
+}
+
+/** Parse `LIST (flags) delim name` (handles quoted, literal and NIL delimiters, modified UTF-7). */
+export function parseListResponse(data: string): ImapListEntry {
+  const toks = tokenize(data);
+  const flags = (tokList(toks[1]) ?? []).map(t => tokStr(t) ?? '').filter(Boolean);
+  const delimiter = isNil(toks[2]) ? '' : tokStr(toks[2]) ?? '';
+  const rawName = tokStr(toks[3]) ?? '';
+  const entry: ImapListEntry = { name: decodeMailboxName(decodeLatin1Utf8(rawName)), delimiter, flags };
+  const special = flags.find(f => SPECIAL_USE.has(f.toUpperCase()));
+  if (special) entry.specialUse = special;
+  return entry;
 }
 
 function parseStatusResponse(data: string): ImapStatusResult {
+  const toks = tokenize(data);
+  const items = tokList(toks[2]) ?? [];
   const result: ImapStatusResult = {};
-  const inner = data.match(/\(([^)]+)\)/);
-  if (!inner) return result;
-
-  const pairs = inner[1]!.toUpperCase().split(/\s+/);
-  for (let i = 0; i < pairs.length - 1; i += 2) {
-    const key = pairs[i]!;
-    const val = parseInt(pairs[i + 1]!, 10);
+  for (let i = 0; i + 1 < items.length; i += 2) {
+    const key = tokStr(items[i])?.toUpperCase();
+    const val = tokNum(items[i + 1]);
+    if (val === undefined) continue;
     if (key === 'MESSAGES') result.messages = val;
     else if (key === 'RECENT') result.recent = val;
     else if (key === 'UNSEEN') result.unseen = val;
@@ -754,9 +1011,26 @@ function parseStatusResponse(data: string): ImapStatusResult {
 }
 
 function parseAppendUid(okData: string): ImapAppendResult {
-  const m = okData.match(/\[APPENDUID\s+(\d+)\s+(\d+)\]/i);
+  const m = /\[APPENDUID\s+(\d+)\s+(\d+)\]/i.exec(okData);
   if (!m) return {};
-  return { uidValidity: parseInt(m[1]!, 10), uid: parseInt(m[2]!, 10) };
+  return { uidValidity: Number(m[1]), uid: Number(m[2]) };
+}
+
+/** A server may split one message's attributes across several FETCH responses. */
+function mergeByUid(list: FetchAttributes[]): FetchAttributes[] {
+  const byUid = new Map<number, FetchAttributes>();
+  const order: FetchAttributes[] = [];
+  for (const a of list) {
+    const prev = a.uid !== undefined ? byUid.get(a.uid) : undefined;
+    if (!prev) {
+      if (a.uid !== undefined) byUid.set(a.uid, a);
+      order.push(a);
+      continue;
+    }
+    for (const [k, v] of a.sections) prev.sections.set(k, v);
+    Object.assign(prev, { ...a, sections: prev.sections });
+  }
+  return order;
 }
 
 function buildFullMessage(partial: Partial<ImapMessage>): ImapMessage {
@@ -777,6 +1051,7 @@ function buildFullMessage(partial: Partial<ImapMessage>): ImapMessage {
       messageId: null,
     },
     body: partial.body,
+    structure: partial.structure,
     size: partial.size ?? 0,
     internalDate: partial.internalDate ?? null,
     modSeq: partial.modSeq,

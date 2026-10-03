@@ -40,6 +40,12 @@ export class DeadLetterQueue extends EventEmitter {
     }
   }
 
+  /** Hold a job that is already dead (e.g. restored from storage) without emitting `dead`. */
+  load(job: QueueJob): void {
+    job.status = 'dead';
+    this.jobs.set(job.id, job);
+  }
+
   /** All dead jobs in insertion order. */
   getAll(): QueueJob[] {
     return [...this.jobs.values()];

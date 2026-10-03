@@ -1,6 +1,6 @@
 {
   "name": "@mailts/trap",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Local SMTP mail trap with web preview UI — zero-signup Ethereal replacement",
   "license": "MIT",
   "author": {
@@ -27,7 +27,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "build": "tsup",

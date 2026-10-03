@@ -1,0 +1,61 @@
+name: Dry-run publish
+
+# Reusable publishability check for one package: build it exactly as the release
+# workflow does, verify NPM_TOKEN can publish it, and run `npm publish --dry-run`
+# + `npm pack --dry-run` WITHOUT publishing. Called by ci.yml on every push and
+# same-repo PR, so a broken token or package is caught long before a release.
+
+on:
+  workflow_call:
+    inputs:
+      workspace:
+        description: "Package directory: '.' for @mailts/core, packages/<name> otherwise"
+        type: string
+        default: '.'
+    secrets:
+      NPM_TOKEN:
+        required: true
+
+jobs:
+  dry-run:
+    name: Dry run (${{ inputs.workspace == '.' && '@mailts/core' || inputs.workspace }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: |
+          npm run build:core
+          if [ "${{ inputs.workspace }}" != "." ]; then npm run build --workspace=${{ inputs.workspace }}; fi
+
+      # Mirror the release workflows: file: links to sibling packages become semver ranges.
+      - name: Rewrite file deps to published semver
+        if: inputs.workspace != '.'
+        working-directory: ${{ inputs.workspace }}
+        run: |
+          MV=$(node -p 'require("../../package.json").version')
+          TV=$(node -p 'require("../trap/package.json").version')
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            for (const field of ['dependencies', 'devDependencies']) {
+              const d = p[field] || {};
+              if (d['@mailts/core'] && d['@mailts/core'].startsWith('file:')) d['@mailts/core'] = '>=${MV} <2.0.0';
+              if (d['@mailts/trap'] && d['@mailts/trap'].startsWith('file:')) d['@mailts/trap'] = '>=${TV} <2.0.0';
+            }
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+      - uses: ./.github/actions/npm-dry-run
+        with:
+          working-directory: ${{ inputs.workspace }}
+          npm-token: ${{ secrets.NPM_TOKEN }}

@@ -9,6 +9,13 @@ export interface DriverMessage<T = EmailOptions> {
   data: T;
   /** Optional priority hint forwarded to the `MailQueue` scheduler. */
   priority?: JobPriority;
+  /**
+   * Optional dedupe key. The worker skips messages whose key it has already
+   * accepted (within `queue.idempotencyWindowMs`, per worker process); for
+   * cross-process dedupe, enforce uniqueness in your backend too (Redis
+   * `SET NX`, a Postgres unique index…).
+   */
+  idempotencyKey?: string;
 }
 
 /**
@@ -34,9 +41,8 @@ export interface DriverMessage<T = EmailOptions> {
 export interface QueueDriver<T = EmailOptions> {
   /**
    * Fetch the next message from the external queue.
-   * Return `null` when no message is available — the worker will call again
-   * immediately (implement long-polling or a short sleep inside this method
-   * to avoid a tight spin loop).
+   * Return `null` when no message is available — the worker waits
+   * `idleDelayMs` before calling again (long-polling inside `dequeue` is fine too).
    */
   dequeue(): Promise<DriverMessage<T> | null>;
 
@@ -50,4 +56,17 @@ export interface QueueDriver<T = EmailOptions> {
    * The implementation decides whether to delete, dead-letter, or re-enqueue.
    */
   nack(id: string, reason?: Error): Promise<void>;
+
+  /**
+   * Optional: return a message that was received but not started (worker
+   * shutdown) so another consumer can take it immediately. Without it the
+   * message reappears after the backend's visibility timeout.
+   */
+  release?(id: string): Promise<void>;
+
+  /**
+   * Optional: a job was cancelled by the application (`worker.cancel(id)`).
+   * Defaults to `ack` — the message is removed without being sent.
+   */
+  cancel?(id: string): Promise<void>;
 }

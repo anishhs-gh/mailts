@@ -1,5 +1,6 @@
 import { createHash, createSign } from 'crypto';
 
+/** DKIM signing key and options (`SmtpConfig.dkim`). Publish the public key in DNS at `<keySelector>._domainkey.<domainName>`. */
 export interface DkimConfig {
   /** Domain name (`d=` tag) — e.g. `example.com`. */
   domainName: string;
@@ -8,8 +9,9 @@ export interface DkimConfig {
   /** RSA private key in PEM format. */
   privateKey: string;
   /**
-   * Headers to sign.  Order matters — headers are signed in the order listed.
-   * @default ['from','to','subject','date','message-id','mime-version','content-type']
+   * Headers to sign (only those present are used). Order matters.
+   * @default ['from','to','subject','date','message-id','mime-version','content-type','reply-to','cc',
+   *           'in-reply-to','references','list-unsubscribe','list-unsubscribe-post']
    */
   headerFieldNames?: string[];
 }
@@ -17,6 +19,9 @@ export interface DkimConfig {
 const DEFAULT_HEADERS = [
   'from', 'to', 'subject', 'date', 'message-id',
   'mime-version', 'content-type', 'reply-to', 'cc',
+  'in-reply-to', 'references',
+  // RFC 8058: one-click unsubscribe is only honoured when these are DKIM-signed
+  'list-unsubscribe', 'list-unsubscribe-post',
 ];
 
 /**

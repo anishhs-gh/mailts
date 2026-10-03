@@ -1,6 +1,6 @@
 {
   "name": "@mailts/cli",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Command-line interface for mailts — configure, test, send, read, queue",
   "license": "MIT",
   "author": {
@@ -13,12 +13,13 @@
   },
   "files": [
     "dist",
+    "skill",
     "cli.mjs",
     "README.md",
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "build": "tsup",
@@ -27,11 +28,13 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@mailts/core": ">=0.1.0 <2.0.0",
-    "@mailts/trap": ">=0.1.0 <2.0.0"
+    "@mailts/core": ">=1.0.0 <2.0.0",
+    "@mailts/trap": ">=1.1.0 <2.0.0"
   },
   "peerDependenciesMeta": {
-    "@mailts/trap": { "optional": true }
+    "@mailts/trap": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@mailts/core": "file:../..",
@@ -52,7 +55,9 @@
     "email-cli",
     "transactional",
     "trap",
-    "queue"
+    "queue",
+    "claude-code",
+    "agent-skill"
   ],
   "repository": {
     "type": "git",

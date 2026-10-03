@@ -1,9 +1,12 @@
 import { httpRequest } from './HttpClient.js';
-import { toAddressObjects, resolveApiAttachments } from './utils.js';
+import { jsonBodyOptions, toAddressObjects, resolveApiAttachments, apiHeaders, assertOk, request } from './utils.js';
 import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
 
+/**
+ * Options for `new SendGridTransport()`.
+ */
 export interface SendGridConfig {
   /** SendGrid API key — starts with `SG.`. */
   apiKey: string;
@@ -30,6 +33,7 @@ export class SendGridTransport implements Transport {
   }
 
   async send(message: BuiltMessage, options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
+    options = jsonBodyOptions(options, 'SendGrid', true);
     const fromObj = toAddressObjects(options.from ?? message.from)[0] ?? { email: message.from };
     const attachments = await resolveApiAttachments(options.attachments ?? []);
 
@@ -43,6 +47,7 @@ export class SendGridTransport implements Transport {
 
     const content: { type: string; value: string }[] = [];
     if (options.text) content.push({ type: 'text/plain', value: options.text });
+    if (options.amp)  content.push({ type: 'text/x-amp-html', value: options.amp }); // must precede text/html
     if (options.html) content.push({ type: 'text/html',  value: options.html });
 
     const payload: Record<string, unknown> = {
@@ -57,7 +62,8 @@ export class SendGridTransport implements Transport {
       if (rt) payload['reply_to'] = rt;
     }
 
-    if (options.headers) payload['headers'] = options.headers;
+    const headers = apiHeaders(options, message);
+    if (Object.keys(headers).length) payload['headers'] = headers;
 
     if (attachments.length) {
       payload['attachments'] = attachments.map(a => ({
@@ -69,7 +75,7 @@ export class SendGridTransport implements Transport {
       }));
     }
 
-    const res = await httpRequest({
+    const res = await request('sendgrid', () => httpRequest({
       method: 'POST',
       url: `${this.base}/v3/mail/send`,
       headers: {
@@ -78,11 +84,8 @@ export class SendGridTransport implements Transport {
       },
       body: JSON.stringify(payload),
       signal,
-    });
-
-    if (res.status >= 400) {
-      throw new Error(`SendGrid error ${res.status}: ${res.body}`);
-    }
+    }));
+    assertOk('sendgrid', res);
 
     // SendGrid responds 202 Accepted with no body
     const msgId = res.headers['x-message-id'];

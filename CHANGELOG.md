@@ -3,6 +3,97 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
+## [1.0.0] — 2026-10-03
+
+First stable release: correctness and security fixes, OAuth, one mailbox API for IMAP / Microsoft Graph / Gmail, connection pooling, a rewritten queue and smart inbox content. From here on the public API follows [semantic versioning](README.md#stability--versioning). Upgrading from 0.4: see [MIGRATION.md](MIGRATION.md). Tracking issue: #17.
+
+### Fixed — IMAP
+
+- **Message bodies were truncated.** The literal reader subtracted the prefix line from the literal size, so multi-line bodies (quoted replies, attachments) were cut short and the remainder parsed as bogus responses. Framing is now byte-exact and O(n).
+- **`fetch({ bodies: true })` marked mail as read** (it fetched `RFC822`). It now uses `BODY.PEEK[]`.
+- A `NIL` or quoted section returned **another section's bytes**; responses are now decoded from a structured tokenizer instead of regexes, which also fixes ENVELOPE literals, parentheses in names, and body text that looked like FETCH syntax.
+- `fetchText()` / `textOnly` returned quoted-printable/base64 text undecoded.
+- `LIST` truncated names containing spaces (`[Gmail]/Sent Mail`); modified UTF-7, literal names and NIL delimiters are now handled, and mailbox arguments are encoded.
+- A dropped connection left commands hanging until timeout; they now fail immediately with a retryable `ImapConnError`, and `ImapSession` reconnects on the next call.
+- IDLE: stop always waited 5 s, the completion was never awaited, commands could be written into an IDLE stream, and the untagged buffer grew without bound. A silently dropped connection (NAT/firewall timeout) no longer stalls IDLE: TCP keepalive, a timeout after DONE, renewal every 9 minutes (`idleRenewalMs`), and a failed IDLE loop closes the connection so watchers reconnect.
+- `MailboxWatcher.stop()` during a reconnect leaked the new connection.
+- XOAUTH2 failures hung the connection (the error challenge was never answered).
+- BODYSTRUCTURE read the disposition from the wrong position for non-text parts; RFC 2231 filenames and `message/rfc822` sub-structures are supported.
+- `[UNSEEN n]` was reported as the unseen count (it is a sequence number — now `firstUnseen`).
+- `APPEND` sent an invalid date-time format; large UID sets exceeded server line limits (now compressed and chunked); `close()` issued `CLOSE`, silently expunging `\Deleted` mail.
+- User-supplied flags, sequence sets and sections are validated (no command injection); non-ASCII search terms are sent as literals with `CHARSET UTF-8`.
+
+### Fixed — Queue
+
+- **`shutdown()` cancelled pending mail.** It now takes `{ pending: 'drain' | 'keep' | 'cancel', timeoutMs }`, defaulting to delivering (in-memory) or keeping (persistent) mail, and never hangs.
+- **Persistent queue lost restored jobs** (restored before the send function existed) and **sent jobs twice** (re-enqueued under new ids). Jobs now keep their ids, wait for a send function, and are claimed with leases so several processes can share a database safely; a crashed local owner is detected immediately.
+- Buffers and Dates did not survive persistence (new versioned `JobCodec`; streams are rejected at enqueue).
+- Retry backoff held a concurrency slot; retries are now scheduled and free the slot.
+- `drain()` hung while paused; `shutdown(timeout)` could hang after aborting a job.
+- Queued sends bypassed `devMode` (real mail was sent in dev mode) and middleware.
+- `MailWorker` pulled the whole external queue into memory, spun on empty `dequeue()`, and crashed the process on an `ack`/`nack` rejection.
+- `configure()` leaked replaced pools and SQLite handles; documented queue defaults did not match the code.
+
+### Fixed — Transports and proxy
+
+- HTTP transports threw plain `Error`s, so rate limits (429) and outages (5xx) went straight to the DLQ. They now throw `TransportError` (retryable for 408/425/429/5xx and network failures, `retryAfterMs` honoured by the queue; 401/403 → `EAUTH`).
+- Replies sent via Resend, SendGrid or Postmark left the thread (In-Reply-To / References were dropped); JSON-API transports now forward threading and unsubscribe headers.
+- A non-JSON success body crashed the send; SES had no endpoint override (signing now verified against the AWS SigV4 test vector).
+- Connections through an HTTP CONNECT, SOCKS5 or SOCKS4 proxy hung when the SMTP greeting arrived in the same packet as the proxy reply (bytes were discarded).
+- `SmtpTransport` reported every recipient as accepted.
+- Reusing a job `id` on `SqliteQueue` re-sent an already delivered job; ids are now unique for the lifetime of the database.
+- SMTP reply-stream errors (oversized replies) crashed the process via an unhandled `error` event.
+
+### Fixed — SMTP and MIME
+
+- Credentials could be sent in clear text when a server (or attacker) omitted STARTTLS — `requireTLS` now defaults on when authenticating (loopback hosts exempt).
+- Header injection through attachment filenames and content types; invalid header names are rejected instead of silently repaired.
+- Non-ASCII subjects and custom headers were sent as raw UTF-8 (now RFC 2047); non-ASCII filenames use RFC 2231. ASCII text that looks like an encoded word (`=?…?=`) is encoded too, so readers don't decode it.
+- One rejected recipient failed the whole send and `rejected` was always empty.
+- The pool handed broken connections (aborted, failed RSET) to the next caller and leaked abort listeners.
+- XOAUTH2 `334` error challenges poisoned the connection.
+- ical-only invites were rejected; `Attachment.encoding` was ignored; quoted-printable left trailing whitespace unprotected.
+- Envelope addresses with CR/LF or `<>` could inject SMTP commands; malformed From/To/Cc/Bcc/Reply-To addresses are now rejected by the builder (also protecting HTTP transports).
+- HTTP transports re-read `path` attachments outside the attachment policy (with `{ root }`, relative paths resolved against the working directory); `MailTs` now resolves them once under the policy.
+
+### Added
+
+- **One mailbox API** (`@mailts/core/mailbox`, also exported from the root): the `Mailbox` interface with `imapMailbox(session)`, `GraphMailbox` (Microsoft 365 via Graph — experimental) and `GmailMailbox` (Gmail API): list, status, fetch with bodies, search, raw source, flags, move, delete, append, watch.
+- **`GraphTransport` / `GmailTransport`** — send through Microsoft Graph (works when SMTP AUTH is disabled; experimental) or the Gmail API, with the MIME mailts built.
+- **App-only OAuth**: `googleServiceAccountProvider` (domain-wide delegation) and `microsoftAppOnlyProvider` (client credentials, secret or certificate — experimental); `SCOPES` presets, `microsoft({ api: 'graph' })`, `googleWith(scopes)`.
+- **`buildReply` / `buildForward`** — threading, reply-all, quoting, forward inline or as `message/rfc822`.
+- **One-click unsubscribe**: `EmailOptions.unsubscribe` (List-Unsubscribe + List-Unsubscribe-Post, DKIM-signed by default), `isOneClickUnsubscribe()`.
+- **Queue**: `idempotencyKey` (persisted by SQLite, schema v3), Message-ID pinned at enqueue, `rateLimit` (per second/minute/hour/day, per queue/sender/custom, recipient counting), `throttled` event; `MailWorker` honours `DriverMessage.idempotencyKey`.
+- **Limits**: `imap.limits` (literal / response / line bytes → `LimitError`, `ELIMIT`), `parseMessage(raw, { maxParts, maxHeaderBytes, maxDepth })` with `truncated`, SMTP reply caps. TLS `minVersion` defaults to TLSv1.2.
+- `TransportError`, `LimitError`; `HttpResponse.raw`; `TransportResult.providerMessageId` / `threadId`.
+- **`@mailts/core/oauth`** — Google and Microsoft: `authorizeWithLoopback()` (PKCE, CLI browser flow), `buildAuthorizationUrl()` / `exchangeCode()` (web), `refreshAccessToken()`, cached single-flight `googleTokenProvider()` / `microsoftTokenProvider()` with refresh-token rotation callbacks, `mailConfigFor()` presets.
+- `auth.getToken` for XOAUTH2 on SMTP and IMAP — called per connect, refreshed once on rejection.
+- `mail.build()`, exported `buildMessage()`, `session.appendMessage()`, `mail.saveToSent()`, `send(opts, { saveToSent })`.
+- `parseMessage()` MIME parser; `session.fetchRaw()`; `fetch({ headers })`; `envelope.references`; `findMailbox('\\Sent')`; `ImapListEntry.specialUse`.
+- `session.watch()` / `MailboxWatcher` — new mail by UID on a dedicated connection with reconnect and catch-up.
+- `ImapSession` lazy connect, `reconnect`, `keepAliveMs`, `isConnected`; `ImapClient.noop()`, `fetchAttributes()`.
+- `EmailOptions.inReplyTo` / `references`; `replyTo` accepts a list.
+- `attachmentPolicy: 'allow' | 'deny' | { root }` — also applied by `mail.build()`, `saveToSent()`, `session.appendMessage()` and `ImapPool`.
+- **Smart inbox content**: `EmailOptions.structuredData` (schema.org JSON-LD rendered into the html `<head>`, escaped, excluded from generated text) with typed `schemaOrg` builders — `order`, `parcelDelivery`, `flightReservation`, `lodgingReservation`, `eventReservation`, `foodReservation`, `viewAction`, `discountOffer`, `promotionCard`; `EmailOptions.amp` (`text/x-amp-html` part between text and html, validated; carried by SMTP/SES/Mailgun/Gmail/SendGrid, rejected by Resend/Postmark); `EmailOptions.adaptiveCard` (Outlook Actionable Messages, `originator` required). README guides for OTP emails and BIMI.
+- **`ImapPool`** — per-account IMAP session pool for multi-tenant servers: exclusive `use(key, config, fn)`, `maxPerAccount` / `maxSessions` with LRU eviction of idle sessions, idle timeout, acquire timeout (`ETIMEOUT`), lazy/async config, sessions with failed logins discarded, `close(key)` / `closeAll()`.
+- Queue: `enqueue(opts, { sendAt, id })`, `scheduled` state and stat, `get()`, `list()`, `maxRetryDelay`, `ShutdownResult`; `QueueDriver.release()` / `cancel()`; `MailWorker` `prefetch`, `idleDelayMs`, `use()`.
+- `SmtpClient.send()` returning accepted/rejected; `SMTPUTF8` and `BODY=8BITMIME` when required.
+- Errors: `ImapAuthError`, `ImapConnError`, `OAuthError`; `ImapError.responseCode`.
+
+### Changed
+
+- **Stable API**: every public export and member is documented (editor tooltips, `@default` values); unverified Microsoft APIs are tagged `@experimental` and protocol internals **Low-level**. See README → *Stability & versioning*.
+- `htmlToText` (auto plain text) drops `<script>` and `<style>` blocks anywhere in the html.
+- **Breaking:** `path` attachments are rejected when `attachmentPolicy` is unset (was: read, with a warning). Pass `content`, or set `{ root }` / `'allow'`.
+- Node.js **22+** required (build target `node22`); Node 18 and 20 are end-of-life. `queue.persist` needs 22.13+.
+- CI runs Node 22/24 and an integration suite against GreenMail (`npm run test:integration`).
+- `npm run typecheck` now also typechecks `examples/`.
+
+### Examples
+
+- New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `imap-pool.ts`, `rich-inbox-email.ts`, `otp-email.ts`, `queue-driver-postgres.ts` (multi-instance queue on Postgres: `SKIP LOCKED`, leases, `maxAttempts` cap, idempotency keys; integration-tested on PGlite), `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
+- Updated for 1.0: `attachments-and-inline.ts` (`attachmentPolicy`), `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
+
 ## [0.4.0] — 2026-06-22
 
 ### Added
