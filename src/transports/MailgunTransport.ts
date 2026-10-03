@@ -5,6 +5,9 @@ import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
 
+/**
+ * Options for `new MailgunTransport()`.
+ */
 export interface MailgunConfig {
   /** Mailgun API key. */
   apiKey: string;

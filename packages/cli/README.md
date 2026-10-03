@@ -205,8 +205,8 @@ mailts trap --smtp-port 2525 --http-port 8080 --no-open
 
 | Package | Version | Required |
 |---------|---------|----------|
-| `@mailts/core` | `>=0.1.0` | Yes |
-| `@mailts/trap` | `>=0.1.0` | No — only needed for `mailts trap` |
+| `@mailts/core` | `>=1.0.0 <2.0.0` | Yes |
+| `@mailts/trap` | `>=1.1.0 <2.0.0` | No — only needed for `mailts trap` |
 
 ---
 

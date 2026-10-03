@@ -5,11 +5,17 @@ import { OAuthError } from '../errors.js';
 import { buildAuthorizationUrl, createPkce, createState, exchangeCode, type TokenSet } from './OAuthClient.js';
 import type { OAuthProvider } from './providers.js';
 
+/** Options for `authorizeWithLoopback()` (browser sign-in for CLIs and desktop apps). */
 export interface LoopbackOptions {
+  /** `google()` or `microsoft()`. */
   provider: OAuthProvider;
+  /** OAuth client id (Google: "Desktop app" client; Microsoft: public client with `http://localhost` redirect). */
   clientId: string;
+  /** Required by Google even for desktop clients; omit for Microsoft public clients. */
   clientSecret?: string;
+  /** @default provider.scopes */
   scopes?: readonly string[];
+  /** Pre-fill the account picker with this address. */
   loginHint?: string;
   /** Fixed port (0 = random, the default). */
   port?: number;

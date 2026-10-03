@@ -10,9 +10,11 @@ import type { ImapAttachment, ImapEnvelope } from '../types/imap.js';
 
 // ── Headers ─────────────────────────────────────────────────────────────────
 
+/** Parsed header block of a message or MIME part. Lookups are case-insensitive. */
 export class MimeHeaders {
   /** Header name (lower-case) → raw unfolded values (byte strings), in order. */
   private readonly map = new Map<string, string[]>();
+  /** Every header as `[name, raw value]`, in original order (unfolded, not decoded). */
   readonly lines: Array<[name: string, value: string]> = [];
 
   constructor(block: string) {
@@ -40,10 +42,12 @@ export class MimeHeaders {
     return v === undefined ? undefined : decodeRfc2047(v);
   }
 
+  /** All values for `name` (e.g. `Received`), RFC 2047-decoded, in order. */
   getAll(name: string): string[] {
     return (this.map.get(name.toLowerCase()) ?? []).map(v => decodeRfc2047(v));
   }
 
+  /** `true` when the header is present. */
   has(name: string): boolean {
     return this.map.has(name.toLowerCase());
   }
@@ -216,13 +220,17 @@ export function parseMessageIds(raw: string | undefined): string[] {
 
 // ── Part tree ───────────────────────────────────────────────────────────────
 
+/** A node of the parsed MIME tree (`ParsedMessage.root`). */
 export interface MimePart {
+  /** This part's headers. */
   headers: MimeHeaders;
   /** Lower-cased `type/subtype`; defaults per RFC 2045 (`text/plain`, or `message/rfc822` in digests). */
   contentType: string;
+  /** Content-Type parameters (`charset`, `name`, `boundary`…), lower-cased keys, RFC 2231-decoded. */
   params: Record<string, string>;
   /** `attachment` | `inline` | undefined */
   disposition?: string;
+  /** Content-Disposition parameters (`filename`, `size`…), RFC 2231-decoded. */
   dispositionParams: Record<string, string>;
   /** Lower-cased Content-Transfer-Encoding (default `7bit`). */
   encoding: string;
@@ -410,16 +418,23 @@ export function partFilename(part: MimePart): string | undefined {
 
 // ── High-level message view ─────────────────────────────────────────────────
 
+/** Decoded content of a message. */
 export interface ParsedBody {
+  /** First `text/plain` body part (not an attachment), decoded to a string. */
   text?: string;
+  /** First `text/html` body part, decoded to a string. */
   html?: string;
+  /** Attachments, inline images and embedded messages, with content. */
   attachments: ImapAttachment[];
 }
 
+/** Result of `parseMessage()`: decoded bodies, attachments and headers of a raw message. */
 export interface ParsedMessage extends ParsedBody {
   /** `true` when the message exceeded a `MimeLimits` bound and was only partly parsed. */
   truncated: boolean;
+  /** Top-level headers. */
   headers: MimeHeaders;
+  /** From/To/Subject/Date… parsed like an IMAP envelope. */
   envelope: ImapEnvelope;
   /** Message-IDs from the References header, oldest first. */
   references: string[];
@@ -445,6 +460,7 @@ export function parseMessage(raw: Buffer | string, limits: MimeLimits = {}): Par
   };
 }
 
+/** Build an `ImapEnvelope` from parsed headers (decodes addresses and encoded words). */
 export function envelopeFromHeaders(h: MimeHeaders): ImapEnvelope {
   const dateRaw = h.raw('date');
   const date = dateRaw ? new Date(dateRaw) : null;

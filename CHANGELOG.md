@@ -3,9 +3,9 @@
 All notable changes to this package are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: [SemVer](https://semver.org/)
 
-## [0.5.0] — 2026-09-30
+## [1.0.0] — Unreleased
 
-Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) for behaviour changes. Tracking issue: #17.
+First stable release: correctness and security fixes, OAuth, one mailbox API for IMAP / Microsoft Graph / Gmail, connection pooling, a rewritten queue and smart inbox content. From here on the public API follows [semantic versioning](README.md#stability--versioning). Upgrading from 0.4: see [MIGRATION.md](MIGRATION.md). Tracking issue: #17.
 
 ### Fixed — IMAP
 
@@ -82,6 +82,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 ### Changed
 
+- **Stable API**: every public export and member is documented (editor tooltips, `@default` values); unverified Microsoft APIs are tagged `@experimental` and protocol internals **Low-level**. See README → *Stability & versioning*.
 - `htmlToText` (auto plain text) drops `<script>` and `<style>` blocks anywhere in the html.
 - **Breaking:** `path` attachments are rejected when `attachmentPolicy` is unset (was: read, with a warning). Pass `content`, or set `{ root }` / `'allow'`.
 - Node.js **22+** required (build target `node22`); Node 18 and 20 are end-of-life. `queue.persist` needs 22.13+.
@@ -91,7 +92,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 ### Examples
 
 - New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `imap-pool.ts`, `rich-inbox-email.ts`, `otp-email.ts`, `queue-driver-postgres.ts` (multi-instance queue on Postgres: `SKIP LOCKED`, leases, `maxAttempts` cap, idempotency keys; integration-tested on PGlite), `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
-- Updated for 0.5: `attachments-and-inline.ts` (`attachmentPolicy`), `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
+- Updated for 1.0: `attachments-and-inline.ts` (`attachmentPolicy`), `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
 
 ## [0.4.0] — 2026-06-22
 

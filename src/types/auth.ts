@@ -18,6 +18,7 @@ export interface TokenContext {
  */
 export type TokenProvider = (ctx: TokenContext) => Promise<string> | string;
 
+/** Auth mechanism: `plain` / `login` (password) or `xoauth2` (OAuth 2.0 access token). */
 export type MailAuthType = 'plain' | 'login' | 'xoauth2';
 
 /**
@@ -27,8 +28,11 @@ export type MailAuthType = 'plain' | 'login' | 'xoauth2';
  *   access tokens expire after ~1h and are refreshed transparently).
  */
 export interface MailAuth {
+  /** Mechanism. */
   readonly type: MailAuthType;
+  /** Login name — usually the full mailbox address. */
   readonly user: string;
+  /** Password or app password (`plain` / `login`). */
   readonly pass?: string;
   /** Static OAuth access token (no refresh). */
   readonly token?: string;

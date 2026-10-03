@@ -6,7 +6,7 @@ Modern TypeScript mail library — native SMTP/IMAP over Node.js built-ins, zero
 npm install @mailts/core
 ```
 
-Requires Node.js 22+ (SQLite queue persistence needs 22.13+). Upgrading from 0.4? See [MIGRATION.md](MIGRATION.md).
+Requires Node.js 22+ (SQLite queue persistence needs 22.13+). Stable since 1.0 — see [Stability & versioning](#stability--versioning). Upgrading from 0.4? See [MIGRATION.md](MIGRATION.md).
 
 ## Features
 
@@ -1201,6 +1201,26 @@ const mail = new MailTs({ smtp: { ... }, devMode: true });
 // send() resolves immediately — nothing is transmitted
 await mail.send({ ... });
 ```
+
+---
+
+## Stability & versioning
+
+From **1.0.0**, `@mailts/core` follows [semantic versioning](https://semver.org): breaking changes to the public API
+only in a major release. The public API is everything exported from `@mailts/core` and its subpaths
+(`/smtp`, `/imap`, `/queue`, `/logger`, `/transports`, `/oauth`, `/mailbox`), as typed and documented — every export
+carries a tooltip in your editor.
+
+Two groups are excluded and say so in their tooltips:
+
+| Group | Exports | Why |
+|---|---|---|
+| **Experimental** (`@experimental`) | `GraphTransport`, `GraphMailbox`, `microsoftAppOnlyProvider` and their option types | Not yet verified against a live Microsoft 365 tenant; may change in a minor release |
+| **Low-level** | Protocol helpers: `ImapParser`, `ImapCmd`, `ImapParts`, `buildSearchCommand`, `buildSearchParts`, `checkFlags`, `tokenize`, `ImapToken`, `uidSets`, `encodeMailboxName`, `decodeMailboxName`, `parseFetchResponse`, `parseFetchAttributes`, `FetchAttributes`, `parseSectionResponse`, `SmtpStream`, `SmtpReply`, `Cmd`, `parseCapabilities`, `dotStuff` | Internals exported for advanced use; may change in a minor release |
+
+Bug fixes can change behaviour that was wrong (for example a mis-encoded header) in a minor or patch release. Dropping
+support for a Node.js version is a major change. `@mailts/trap`, `@mailts/cli` and `@mailts/testing` are versioned
+separately and declare the `@mailts/core` range they support.
 
 ---
 

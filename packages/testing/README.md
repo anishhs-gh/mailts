@@ -96,9 +96,10 @@ Each test file gets its own trap server instance. The store is isolated per suit
 
 | Package | Version |
 |---------|---------|
-| `@mailts/core` | `>=0.1.0` |
-| `@mailts/trap` | `>=0.1.0` |
+| `@mailts/core` | `>=1.0.0 <2.0.0` |
 | `vitest` | `>=1.0.0` |
+
+`@mailts/trap` (`>=1.1.0 <2.0.0`) is installed as a regular dependency.
 
 ---
 

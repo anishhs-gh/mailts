@@ -91,6 +91,7 @@ export class ImapClient extends EventEmitter {
   /** Incremented on every capability update. */
   private capsVersion = 0;
 
+  /** The configuration this client was created with. */
   readonly config: ImapConfig;
   private readonly logger: Logger | null;
 
@@ -114,6 +115,7 @@ export class ImapClient extends EventEmitter {
 
   // ─── Connection ────────────────────────────────────────────────────────────
 
+  /** Open the connection, upgrade with STARTTLS when required, and log in. Throws `ImapAuthError` / `ImapConnError`. */
   async connect(): Promise<void> {
     if (this.state !== 'idle') throw new ImapError('Client already connected');
     this.state = 'connecting';
@@ -497,11 +499,13 @@ export class ImapClient extends EventEmitter {
     if (r) this.captureCapabilities(r);
   }
 
+  /** Server capabilities (upper-case), refreshed from the server when not yet known. */
   async getCapabilities(): Promise<Set<string>> {
     await this.serialized(() => this.fetchCapabilities());
     return new Set(this.capabilities);
   }
 
+  /** `true` when the server advertised `cap` (case-insensitive), e.g. `'IDLE'`, `'MOVE'`, `'UIDPLUS'`. */
   hasCapability(cap: string): boolean {
     return this.capabilities.has(cap.toUpperCase());
   }
@@ -513,12 +517,14 @@ export class ImapClient extends EventEmitter {
 
   // ─── Mailbox listing ───────────────────────────────────────────────────────
 
+  /** LIST mailboxes matching `pattern` (`*` = all levels, `%` = one level) under `ref`. */
   async list(ref = '', pattern = '*'): Promise<ImapListEntry[]> {
     const extended = this.hasCapability('SPECIAL-USE') && this.hasCapability('LIST-EXTENDED');
     const { untagged } = await this.command(ImapParts.list(ref, pattern, extended));
     return untagged.filter(r => /^LIST\s/i.test(r.data)).map(r => parseListResponse(r.data));
   }
 
+  /** LSUB: subscribed mailboxes matching `pattern`. */
   async listSubscribed(ref = '', pattern = '*'): Promise<ImapListEntry[]> {
     const { untagged } = await this.command(ImapParts.lsub(ref, pattern));
     return untagged.filter(r => /^LSUB\s/i.test(r.data)).map(r => parseListResponse(r.data));
@@ -526,6 +532,7 @@ export class ImapClient extends EventEmitter {
 
   // ─── Mailbox selection ─────────────────────────────────────────────────────
 
+  /** SELECT `mailbox` read-write; later commands act on it. */
   async select(mailbox: string): Promise<ImapMailboxStatus> {
     return this.openMailbox(mailbox, false);
   }
@@ -569,28 +576,34 @@ export class ImapClient extends EventEmitter {
 
   // ─── Mailbox management ────────────────────────────────────────────────────
 
+  /** CREATE a mailbox (non-ASCII names are encoded automatically). */
   async createMailbox(mailbox: string): Promise<void> {
     await this.command(ImapParts.create(mailbox));
   }
 
+  /** DELETE a mailbox and its messages. */
   async deleteMailbox(mailbox: string): Promise<void> {
     await this.command(ImapParts.delete(mailbox));
   }
 
+  /** RENAME a mailbox. */
   async renameMailbox(from: string, to: string): Promise<void> {
     await this.command(ImapParts.rename(from, to));
   }
 
+  /** SUBSCRIBE to a mailbox. */
   async subscribe(mailbox: string): Promise<void> {
     await this.command(ImapParts.subscribe(mailbox));
   }
 
+  /** UNSUBSCRIBE from a mailbox. */
   async unsubscribe(mailbox: string): Promise<void> {
     await this.command(ImapParts.unsubscribe(mailbox));
   }
 
   // ─── Search ────────────────────────────────────────────────────────────────
 
+  /** UID SEARCH in the selected mailbox; returns matching UIDs. */
   async search(query: ImapSearchQuery): Promise<number[]> {
     this.requireSelected();
     const { untagged } = await this.command(ImapParts.uidSearch(query));
@@ -622,6 +635,7 @@ export class ImapClient extends EventEmitter {
     return mergeByUid(out);
   }
 
+  /** UID FETCH `items` for `uids` in the selected mailbox. Never sets `\\Seen` unless `items` asks for a non-PEEK body. */
   async fetch(uids: number[], items = 'UID FLAGS ENVELOPE RFC822.SIZE INTERNALDATE'): Promise<ImapMessage[]> {
     const attrs = await this.fetchAttributes(uids, items);
     return attrs.map(a => buildFullMessage(messageFromAttributes(a)));
@@ -676,11 +690,13 @@ export class ImapClient extends EventEmitter {
 
   // ─── Store / Flags ─────────────────────────────────────────────────────────
 
+  /** Add (`add: true`) or remove `flags` on `uids` (UID STORE). */
   async setFlags(uids: number[], flags: string[], add: boolean): Promise<void> {
     this.requireSelected();
     for (const set of uidSets(uids)) await this.command(ImapParts.uidStore(set, flags, add));
   }
 
+  /** Like `setFlags()` with `.SILENT` — the server does not echo the new flags. */
   async setFlagsSilent(uids: number[], flags: string[], add: boolean): Promise<void> {
     this.requireSelected();
     for (const set of uidSets(uids)) await this.command(ImapParts.uidStore(set, flags, add, true));
@@ -688,6 +704,7 @@ export class ImapClient extends EventEmitter {
 
   // ─── Copy / Move ───────────────────────────────────────────────────────────
 
+  /** UID COPY `uids` to `destMailbox`. */
   async copy(uids: number[], destMailbox: string): Promise<void> {
     this.requireSelected();
     for (const set of uidSets(uids)) await this.command(ImapParts.uidCopy(set, destMailbox));
@@ -711,11 +728,13 @@ export class ImapClient extends EventEmitter {
 
   // ─── Expunge ───────────────────────────────────────────────────────────────
 
+  /** EXPUNGE: permanently remove every `\\Deleted` message in the selected mailbox. */
   async expunge(): Promise<void> {
     this.requireSelected();
     await this.command(['EXPUNGE']);
   }
 
+  /** Remove only these `\\Deleted` messages (UID EXPUNGE). Falls back to `expunge()` without UIDPLUS. */
   async expungeUids(uids: number[]): Promise<void> {
     this.requireSelected();
     if (this.hasCapability('UIDPLUS')) {

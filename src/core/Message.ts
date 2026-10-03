@@ -18,6 +18,7 @@ import {
 import { MimeError } from '../errors.js';
 import { unsubscribeHeaders } from './Unsubscribe.js';
 
+/** A fully built RFC 5322 message — what `mail.build()` / `buildMessage()` return and transports send. */
 export interface BuiltMessage {
   /** Raw RFC 5322 message as a Buffer. */
   raw: Buffer;
@@ -25,6 +26,7 @@ export interface BuiltMessage {
   from: string;
   /** Envelope recipients (bare emails, de-duplicated). */
   to: string[];
+  /** Message-ID header value, with angle brackets. */
   messageId: string;
   /** `true` when an address needs SMTPUTF8 (non-ASCII local part or domain). */
   requiresSmtpUtf8: boolean;
@@ -32,6 +34,7 @@ export interface BuiltMessage {
   requires8BitMime: boolean;
 }
 
+/** Options for `buildMessage()`. */
 export interface BuildOptions {
   /** Policy for `path` attachments. Unset rejects them (same as `'deny'`). */
   attachmentPolicy?: AttachmentPathPolicy;

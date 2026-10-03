@@ -15,7 +15,7 @@ export function encodeOptions(options: EmailOptions): string {
   return JSON.stringify({ v: JOB_CODEC_VERSION, o: toWire(options, 'options') });
 }
 
-/** Inverse of `encodeOptions`. Also accepts plain legacy JSON (pre-0.5 rows). */
+/** Inverse of `encodeOptions`. Also accepts plain legacy JSON (rows written by 0.4 and earlier). */
 export function decodeOptions(data: string): EmailOptions {
   const parsed = JSON.parse(data) as unknown;
   if (parsed && typeof parsed === 'object' && 'v' in parsed && 'o' in parsed) {
@@ -24,7 +24,7 @@ export function decodeOptions(data: string): EmailOptions {
   return reviveLegacyDates(fromWire(parsed) as EmailOptions); // legacy: raw JSON.stringify(options)
 }
 
-/** Pre-0.5 rows stored Dates as ISO strings; restore the known Date fields. */
+/** Rows from 0.4 and earlier stored Dates as ISO strings; restore the known Date fields. */
 function reviveLegacyDates(o: EmailOptions): EmailOptions {
   const d = (v: unknown) => (typeof v === 'string' ? new Date(v) : v);
   const out = { ...o } as EmailOptions & { date?: unknown };
@@ -54,6 +54,7 @@ export function encodeJob(job: QueueJob): string {
   });
 }
 
+/** Inverse of `encodeJob`: restore a `QueueJob` (Buffers, Dates and errors included). */
 export function decodeJob(data: string): QueueJob {
   const j = JSON.parse(data) as Record<string, unknown>;
   const job: QueueJob = {

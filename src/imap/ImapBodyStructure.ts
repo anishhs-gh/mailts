@@ -5,11 +5,13 @@ import { parseHeaderValue } from '../core/MimeParser.js';
 
 /** A single non-multipart MIME part with its section number and metadata. */
 export interface BodyLeaf {
+  /** Discriminator. */
   type: 'leaf';
   /** IMAP section number: "1", "2", "3.1", "3.2.1", … */
   section: string;
   /** Full content-type: "text/plain", "application/pdf", … */
   contentType: string;
+  /** Charset parameter of text parts, e.g. `utf-8`. */
   charset?: string;
   /** Transfer encoding: "base64" | "quoted-printable" | "7bit" | "8bit" | "binary" */
   encoding: string;
@@ -17,7 +19,9 @@ export interface BodyLeaf {
   size: number;
   /** Number of lines — present only for text/* parts. */
   lines?: number;
+  /** Content-ID without angle brackets (inline images referenced as `cid:`). */
   contentId?: string;
+  /** Decoded filename from Content-Disposition or Content-Type `name`. */
   filename?: string;
   /** "attachment" | "inline" | undefined */
   disposition?: string;
@@ -27,15 +31,19 @@ export interface BodyLeaf {
 
 /** A multipart container — holds an ordered list of child BodyNodes. */
 export interface BodyMultipart {
+  /** Discriminator. */
   type: 'multipart';
   /** IMAP section number prefix: "" for top-level, "3" for a nested multipart. */
   section: string;
   /** Full content-type: "multipart/mixed", "multipart/alternative", … */
   contentType: string;
+  /** MIME boundary string. */
   boundary: string;
+  /** Child parts in order. */
   parts: BodyNode[];
 }
 
+/** A node of a message's MIME structure (`fetchStructure()`, `fetch({ structure: true })`). */
 export type BodyNode = BodyLeaf | BodyMultipart;
 
 // ── Entry points ───────────────────────────────────────────────────────────────

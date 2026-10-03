@@ -1,5 +1,5 @@
 /**
- * Failure-mode tests from the 0.5 trust audit: hangs, dead peers, TLS upgrades, leaks.
+ * Failure-mode tests from the 1.0 trust audit: hangs, dead peers, TLS upgrades, leaks.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import * as net from 'net';

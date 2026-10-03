@@ -5,6 +5,10 @@ import type { TokenProvider } from '../types/auth.js';
 import { authorizedRequest } from './ApiAuth.js';
 import { assertOk } from './utils.js';
 
+/**
+ * Options for `new GraphTransport()`.
+ * @experimental Not yet verified against a live Microsoft 365 tenant.
+ */
 export interface GraphTransportConfig {
   /** Mailbox to send as (UPN / email). Also passed to `getToken`. */
   user: string;

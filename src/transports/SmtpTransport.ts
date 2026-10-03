@@ -36,6 +36,7 @@ export class SmtpTransport implements Transport {
     }
   }
 
+  /** Close the pooled SMTP connections. */
   async shutdown(): Promise<void> {
     await this.pool.drain();
   }

@@ -7,14 +7,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ### Changed
 - Requires Node.js 22+ (was 18). Node 18 and 20 are end-of-life.
-- Aligned with `@mailts/core` 0.5: peers `@mailts/core` `>=0.5.0 <2.0.0` and `@mailts/trap` `>=1.1.0 <2.0.0`.
+- Aligned with `@mailts/core` 1.0: peers `@mailts/core` `>=1.0.0 <2.0.0` and `@mailts/trap` `>=1.1.0 <2.0.0`.
 
 ### Fixed
-- `send --attachments` keeps reading the named files with `@mailts/core` 0.5, which rejects `path` attachments unless `attachmentPolicy` allows them.
+- `send --attachments` keeps reading the named files with `@mailts/core` 1.0, which rejects `path` attachments unless `attachmentPolicy` allows them.
 - `mailts send` always shuts the client down (also on the alias path and on errors), so the process exits instead of holding SMTP connections.
 
 ### Added
-- `mailts queue status` shows a `Scheduled` row (retries waiting for backoff and `sendAt` jobs) (`@mailts/core` 0.5+).
+- `mailts queue status` shows a `Scheduled` row (retries waiting for backoff and `sendAt` jobs) (`@mailts/core` 1.0+).
 
 ## [0.1.6] — 2026-05-12
 

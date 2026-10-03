@@ -5,6 +5,9 @@ import type { TokenProvider } from '../types/auth.js';
 import { authorizedRequest } from './ApiAuth.js';
 import { assertOk, parseJson } from './utils.js';
 
+/**
+ * Options for `new GmailTransport()`.
+ */
 export interface GmailTransportConfig {
   /** Account to send as. Also passed to `getToken`. */
   user: string;

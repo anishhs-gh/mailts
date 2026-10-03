@@ -4,8 +4,11 @@ import type { TokenProvider } from '../types/auth.js';
 
 /** Endpoints, scopes and mail servers for an OAuth mail provider. */
 export interface OAuthProvider {
+  /** Provider id: `'google'` or `'microsoft'`. */
   readonly id: string;
+  /** Authorization (consent) endpoint. */
   readonly authorizationUrl: string;
+  /** Token endpoint. */
   readonly tokenUrl: string;
   /** Scopes that grant IMAP + SMTP access (and a refresh token). */
   readonly scopes: readonly string[];
@@ -18,7 +21,9 @@ export interface OAuthProvider {
    * (only the port may vary), so it uses `/` to match `http://localhost`.
    */
   readonly loopbackPath: string;
+  /** IMAP server for this provider (used by `mailConfigFor()`). */
   readonly imap: Pick<ImapConfig, 'host' | 'port' | 'secure'>;
+  /** SMTP server for this provider (used by `mailConfigFor()`). */
   readonly smtp: Pick<SmtpConfig, 'host' | 'port' | 'secure'>;
 }
 
@@ -77,6 +82,7 @@ export function googleWith(scopes: readonly string[]): OAuthProvider {
   return { ...google, id: 'google', scopes: [...scopes, ...OIDC] };
 }
 
+/** Options for `microsoft()`. */
 export interface MicrosoftOptions {
   /**
    * `common` (work + personal accounts, default), `organizations`,

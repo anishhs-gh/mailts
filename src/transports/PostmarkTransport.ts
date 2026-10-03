@@ -4,6 +4,9 @@ import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
 
+/**
+ * Options for `new PostmarkTransport()`.
+ */
 export interface PostmarkConfig {
   /** Postmark server token. */
   serverToken: string;

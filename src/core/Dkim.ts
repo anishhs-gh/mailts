@@ -1,5 +1,6 @@
 import { createHash, createSign } from 'crypto';
 
+/** DKIM signing key and options (`SmtpConfig.dkim`). Publish the public key in DNS at `<keySelector>._domainkey.<domainName>`. */
 export interface DkimConfig {
   /** Domain name (`d=` tag) — e.g. `example.com`. */
   domainName: string;

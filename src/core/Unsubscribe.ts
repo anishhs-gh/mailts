@@ -7,6 +7,7 @@
  */
 import { MimeError } from '../errors.js';
 
+/** `EmailOptions.unsubscribe`: List-Unsubscribe targets. At least one of `url` / `mailto` is required. */
 export interface UnsubscribeOptions {
   /**
    * HTTPS endpoint. For one-click, mailbox providers POST

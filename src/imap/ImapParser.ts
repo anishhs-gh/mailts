@@ -48,6 +48,11 @@ export interface ImapParserEvents {
 const LITERAL_AT_END = /~?\{(\d+)\+?\}$/;
 const CRLF = Buffer.from('\r\n');
 
+/**
+ * Incremental IMAP response parser with byte-exact literal framing and size limits.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export class ImapParser {
   private readonly limits: Required<ImapLimits>;
   /** Bytes accumulated for the response being assembled. */

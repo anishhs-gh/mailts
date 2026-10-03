@@ -11,10 +11,15 @@ const DEFAULT_MAX_DELAY = 60_000;
  * be attempted at most N+1 times total.
  */
 export class RetryPolicy {
+  /** Retries after the first attempt. */
   readonly maxRetries: number;
+  /** Base delay in ms. */
   readonly initialDelay: number;
+  /** Cap for a single delay in ms. */
   readonly maxDelay: number;
+  /** How the delay grows per attempt. */
   readonly backoff: 'linear' | 'exponential' | 'fixed';
+  /** Randomise delays to avoid synchronized retries. */
   readonly jitter: boolean;
 
   constructor(opts: RetryPolicyOptions = {}) {

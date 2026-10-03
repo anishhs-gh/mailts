@@ -11,6 +11,8 @@ const MAX_BUFFER = 64 * 1024; // unterminated input
  *
  * Single-line:  "250 OK\r\n"          → SmtpReply(250, ["250 OK"])
  * Multi-line:   "250-A\r\n250 B\r\n"  → SmtpReply(250, ["250-A", "250 B"])
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
  */
 export class SmtpStream extends Transform {
   private buf = '';

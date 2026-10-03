@@ -5,8 +5,9 @@
  * as framed by `ImapParser`. Literals appear inline as `{N}\r\n<N bytes>` and
  * are consumed by length — never scanned — so their content can contain any
  * byte sequence (parens, quotes, CRLF, `{5}`, …) without confusing the parser.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
  */
-
 export type ImapToken =
   | { type: 'atom'; value: string }
   /** `value` is a byte string (latin1). `literal` is true for `{N}` literals. */
@@ -16,7 +17,11 @@ export type ImapToken =
 
 const ATOM_END = new Set([' ', '(', ')', '\r', '\n']);
 
-/** Tokenize a response data string into a flat token sequence. Lists nest. */
+/**
+ * Tokenize a response data string into a flat token sequence. Lists nest.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export function tokenize(input: string, start = 0): ImapToken[] {
   const t = new Tokenizer(input, start);
   const out: ImapToken[] = [];
@@ -155,7 +160,11 @@ export function mailboxArg(name: string): CommandPart {
   return astring(encodeMailboxName(name));
 }
 
-/** RFC 3501 §5.1.3 modified UTF-7 encoder. */
+/**
+ * RFC 3501 §5.1.3 modified UTF-7 encoder.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export function encodeMailboxName(name: string): string {
   let out = '';
   let pending = '';
@@ -179,7 +188,11 @@ export function encodeMailboxName(name: string): string {
   return out;
 }
 
-/** RFC 3501 §5.1.3 modified UTF-7 decoder. Invalid sequences are left as-is. */
+/**
+ * RFC 3501 §5.1.3 modified UTF-7 decoder. Invalid sequences are left as-is.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export function decodeMailboxName(name: string): string {
   return name.replace(/&([A-Za-z0-9+,]*)-/g, (whole, b64: string) => {
     if (b64 === '') return '&';
@@ -195,6 +208,8 @@ export function decodeMailboxName(name: string): string {
  * Compress UIDs into an IMAP sequence set (`1:5,9,12:20`), split into chunks
  * whose textual form stays under `maxLen` bytes so commands never exceed
  * server line limits.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
  */
 export function uidSets(uids: readonly number[], maxLen = 4_000): string[] {
   const sorted = [...new Set(uids)].filter(n => Number.isInteger(n) && n > 0).sort((a, b) => a - b);

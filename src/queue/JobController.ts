@@ -1,3 +1,4 @@
+/** Why a running job was stopped: `interrupt` (requeue), `cancel` (discard) or `abort` (failed attempt). */
 export type ControlReason = 'interrupt' | 'cancel' | 'abort';
 
 /**
@@ -7,8 +8,10 @@ export type ControlReason = 'interrupt' | 'cancel' | 'abort';
  */
 export class JobController {
   private readonly ac = new AbortController();
+  /** Set just before `signal` aborts; `null` while the job runs normally. */
   reason: ControlReason | null = null;
 
+  /** Aborted when the job is interrupted, cancelled or aborted — pass it to the send. */
   get signal(): AbortSignal {
     return this.ac.signal;
   }

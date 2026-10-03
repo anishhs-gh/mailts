@@ -5,6 +5,7 @@ import type { Logger } from '../logger/Logger.js';
 import type { ImapConfig } from '../types/imap.js';
 import { ImapAuthError } from '../errors.js';
 
+/** Options for `session.watch()` / `new MailboxWatcher()`. */
 export interface WatchOptions {
   /** Poll interval when the server lacks IDLE. @default 30_000 */
   pollMs?: number;

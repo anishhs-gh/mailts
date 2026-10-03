@@ -5,6 +5,9 @@ import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
 
+/**
+ * Options for `new SesTransport()`.
+ */
 export interface SesConfig {
   /** AWS region (e.g. `us-east-1`). */
   region: string;

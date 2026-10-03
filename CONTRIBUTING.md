@@ -249,6 +249,9 @@ Use this end-to-end checklist for every non-trivial change. Copy it into your PR
   - Add entry under the correct version heading (`[X.Y.Z] — YYYY-MM-DD`)
   - One bullet per user-visible change; group under `### Added`, `### Changed`, `### Fixed`
   - Do **not** create a new version entry if the version hasn't been published yet — append to the current unreleased entry
+- [ ] **JSDoc on every public export and member** — it is the editor tooltip users see. Document defaults with
+  `@default`, mark unverified APIs `@experimental`, and protocol internals with the **Low-level** note
+  (see README → Stability & versioning). Unit-level docs only; no restating the type.
 - [ ] **`README.md`** updated in every affected package
   - New public API documented with a usage snippet
   - New options added to relevant option tables
@@ -394,9 +397,12 @@ All packages use [Semantic Versioning](https://semver.org):
 
 | Change | Version bump |
 |---|---|
-| Bug fix, internal refactor | patch (`0.1.0 → 0.1.1`) |
-| New feature, new export, new option | minor (`0.1.0 → 0.2.0`) |
-| Breaking API change, removed export | major (`0.1.0 → 1.0.0`) |
+| Bug fix, internal refactor | patch (`1.0.0 → 1.0.1`) |
+| New feature, new export, new option | minor (`1.0.0 → 1.1.0`) |
+| Breaking API change, removed export, dropped Node.js version | major (`1.0.0 → 2.0.0`) |
+
+`@mailts/core` is stable since 1.0.0. Exports marked `@experimental` or **Low-level** may change in a minor release —
+see README → *Stability & versioning*.
 
 Version bumps are **manual** — edit `package.json` in the PR that introduces the change. Do not rely on automated tooling to bump versions.
 
@@ -404,7 +410,7 @@ Version bumps are **manual** — edit `package.json` in the PR that introduces t
 
 - `@mailts/cli` and `@mailts/trap` declare `@mailts/core` as a `peerDependency` with range `>=X.Y.0 <(X+1).0.0`.
 - `@mailts/testing` declares both `@mailts/core` and `@mailts/trap` as peers with the same pattern.
-- When `@mailts/core` ships a **minor** with new API that `@mailts/cli` depends on, widen the peer range floor: `>=0.2.0 <2.0.0`. Bump `@mailts/cli` minor too.
+- When `@mailts/core` ships a **minor** with new API that `@mailts/cli` depends on, raise the peer range floor: `>=1.1.0 <2.0.0`. Bump `@mailts/cli` minor too.
 - When `@mailts/core` ships a **major**, all packages must release a new major that widens the peer upper bound.
 
 ---

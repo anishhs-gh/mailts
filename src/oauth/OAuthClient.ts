@@ -6,12 +6,15 @@ import { google, microsoft, type OAuthProvider } from './providers.js';
 
 /** Result of a code exchange or refresh. */
 export interface TokenSet {
+  /** Bearer token for IMAP/SMTP XOAUTH2 or the Graph/Gmail APIs (usually valid ~1 h). */
   accessToken: string;
   /** Present after authorization; after a refresh only when the provider rotated it. */
   refreshToken?: string;
   /** Absolute expiry of `accessToken`. */
   expiresAt: Date;
+  /** Space-separated scopes actually granted. */
   scope?: string;
+  /** OpenID Connect ID token (JWT), when `openid` was requested. */
   idToken?: string;
   /**
    * Mailbox address from the ID token (`email` / `preferred_username` claim).
@@ -21,8 +24,11 @@ export interface TokenSet {
   email?: string;
 }
 
+/** Your OAuth app registration. */
 export interface ClientCredentials {
+  /** `google()` or `microsoft()`. */
   provider: OAuthProvider;
+  /** OAuth client (application) id. */
   clientId: string;
   /** Required by Google for all clients; omit for Microsoft public (desktop) clients. */
   clientSecret?: string;
@@ -32,9 +38,13 @@ export interface ClientCredentials {
 
 // ── PKCE ────────────────────────────────────────────────────────────────────
 
+/** PKCE pair from `createPkce()`. Keep `verifier` server-side until the code exchange. */
 export interface Pkce {
+  /** Secret sent with the code exchange (`codeVerifier`). */
   verifier: string;
+  /** SHA-256 of the verifier, sent in the authorization URL (`codeChallenge`). */
   challenge: string;
+  /** Challenge method. */
   method: 'S256';
 }
 
@@ -52,9 +62,13 @@ export function createState(): string {
 
 // ── Authorization URL ───────────────────────────────────────────────────────
 
+/** Options for `buildAuthorizationUrl()`. */
 export interface AuthorizationUrlOptions {
+  /** `google()` or `microsoft()`. */
   provider: OAuthProvider;
+  /** OAuth client id. */
   clientId: string;
+  /** Must exactly match a redirect URI registered for the client. */
   redirectUri: string;
   /** From `createPkce().challenge`. */
   codeChallenge: string;
@@ -64,6 +78,7 @@ export interface AuthorizationUrlOptions {
   scopes?: readonly string[];
   /** Pre-fill the account picker. */
   loginHint?: string;
+  /** Extra query parameters (e.g. `prompt`, `hd`, `domain_hint`). */
   extraParams?: Record<string, string>;
 }
 
@@ -88,8 +103,11 @@ export function buildAuthorizationUrl(o: AuthorizationUrlOptions): string {
 
 // ── Token endpoint ──────────────────────────────────────────────────────────
 
+/** Options for `exchangeCode()`. */
 export interface ExchangeCodeOptions extends ClientCredentials {
+  /** `code` query parameter from the redirect. */
   code: string;
+  /** The same redirect URI used in the authorization URL. */
   redirectUri: string;
   /** From `createPkce().verifier`. */
   codeVerifier: string;
@@ -105,7 +123,9 @@ export function exchangeCode(o: ExchangeCodeOptions): Promise<TokenSet> {
   });
 }
 
+/** Options for `refreshAccessToken()`. */
 export interface RefreshOptions extends ClientCredentials {
+  /** Stored refresh token. */
   refreshToken: string;
   /** Microsoft requires the scopes on refresh; defaults to `provider.scopes`. */
   scopes?: readonly string[];
@@ -183,11 +203,15 @@ export function emailFromIdToken(idToken: string): string | undefined {
 
 // ── Token provider ──────────────────────────────────────────────────────────
 
+/** Options for `createTokenProvider()` / `googleTokenProvider()` / `microsoftTokenProvider()`. */
 export interface TokenProviderOptions extends ClientCredentials {
+  /** Stored refresh token. */
   refreshToken: string;
+  /** Scopes to request on refresh. @default provider.scopes */
   scopes?: readonly string[];
   /** Seed with a known access token to skip the first refresh. */
   accessToken?: string;
+  /** Expiry of the seeded `accessToken`. */
   expiresAt?: Date;
   /**
    * Called when the provider issues a new refresh token (Microsoft rotates

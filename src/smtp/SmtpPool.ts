@@ -29,6 +29,7 @@ export class SmtpPool extends EventEmitter {
   private idleTimers: Map<SmtpClient, ReturnType<typeof setTimeout>> = new Map();
   private closing = false;
 
+  /** The configuration this pool was created with. */
   readonly config: SmtpConfig;
   private readonly logger: Logger | null;
   private readonly maxConnections: number;

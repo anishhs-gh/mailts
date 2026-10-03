@@ -115,13 +115,21 @@ export class MailWorker extends EventEmitter {
 
   // ── Lifecycle proxies ──────────────────────────────────────────────────────
 
+  /** Cancel a job so it is never sent; the driver's `cancel` (or `ack`) is called. `false` if unknown. */
   cancel(jobId: string): boolean    { return this.queue.cancel(jobId); }
+  /** Cancel all pending and scheduled jobs. Returns the count. */
   cancelAll(): number               { return this.queue.cancelAll(); }
+  /** Return a running job to the front of its tier without counting the attempt. */
   interrupt(jobId: string): boolean { return this.queue.interrupt(jobId); }
+  /** Interrupt every running job. Returns the count. */
   interruptAll(): number            { return this.queue.interruptAll(); }
+  /** Abort a running job — counts as a failed attempt (retry / nack apply). */
   abort(jobId: string): boolean     { return this.queue.abort(jobId); }
+  /** Abort every running job. */
   abortAll(): void                  { this.queue.abortAll(); }
+  /** Resolves when no received job is pending, scheduled or running. */
   drain(): Promise<void>            { return this.queue.drain(); }
+  /** Counts of the jobs this worker holds. */
   stats(): QueueStats               { return this.queue.stats(); }
 
   /**

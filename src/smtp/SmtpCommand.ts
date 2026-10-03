@@ -1,7 +1,11 @@
 import type { SmtpCapabilities } from '../types/smtp.js';
 import { MimeError } from '../errors.js';
 
-/** Parse EHLO response lines into a capabilities object. */
+/**
+ * Parse EHLO response lines into a capabilities object.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export function parseCapabilities(lines: readonly string[]): SmtpCapabilities {
   const caps: SmtpCapabilities = {
     starttls: false,
@@ -31,6 +35,11 @@ export function parseCapabilities(lines: readonly string[]): SmtpCapabilities {
   return caps;
 }
 
+/**
+ * SMTP command line builders.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export const Cmd = {
   ehlo: (clientName: string) => `EHLO ${clientName}`,
   helo: (clientName: string) => `HELO ${clientName}`,
@@ -60,6 +69,8 @@ function envelopeAddr(email: string): string {
 /**
  * Dot-stuff a message body per RFC 5321 §4.5.2 and append the terminator.
  * Returns the complete DATA payload ending in `\r\n.\r\n`.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
  */
 export function dotStuff(raw: Buffer): Buffer {
   let str = raw.toString('binary');

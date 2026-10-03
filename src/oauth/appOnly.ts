@@ -61,6 +61,7 @@ function cached(fetchToken: () => Promise<{ token: string; expiresIn: number }>,
 
 // ── Google: service account + domain-wide delegation ────────────────────────
 
+/** Options for `googleServiceAccountProvider()`. */
 export interface GoogleServiceAccountOptions {
   /** The service-account JSON key (or its `client_email` / `private_key` fields). */
   credentials: { client_email: string; private_key: string; private_key_id?: string; token_uri?: string };
@@ -68,6 +69,7 @@ export interface GoogleServiceAccountOptions {
   subject: string;
   /** @default ['https://mail.google.com/'] (IMAP/SMTP + Gmail API) */
   scopes?: readonly string[];
+  /** Token request timeout in ms. @default 15_000 */
   timeoutMs?: number;
 }
 
@@ -101,9 +103,14 @@ export function googleServiceAccountProvider(o: GoogleServiceAccountOptions): To
 
 // ── Microsoft: client credentials ──────────────────────────────────────────
 
+/**
+ * Options for `microsoftAppOnlyProvider()`.
+ * @experimental Not yet verified against a live tenant.
+ */
 export interface MicrosoftAppOnlyOptions {
   /** Tenant id or domain (not `common`). */
   tenant: string;
+  /** Application (client) id of the Entra app. */
   clientId: string;
   /** Client secret — or use `certificate`. */
   clientSecret?: string;
@@ -125,6 +132,7 @@ export interface MicrosoftAppOnlyOptions {
   authority?: string;
   /** Full token endpoint override (tests, proxies). */
   tokenUrl?: string;
+  /** Token request timeout in ms. @default 15_000 */
   timeoutMs?: number;
 }
 

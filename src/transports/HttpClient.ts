@@ -2,17 +2,25 @@ import * as https from 'https';
 import * as http from 'http';
 import { URL } from 'url';
 
+/** Request for `httpRequest()` (zero-dependency HTTPS client used by the API transports). */
 export interface HttpRequest {
+  /** HTTP method, e.g. `POST`. */
   method: string;
+  /** Absolute URL. */
   url: string;
+  /** Request headers. */
   headers: Record<string, string>;
+  /** Request body. */
   body?: Buffer | string;
   /** Optional abort signal — aborts the in-flight HTTP request. */
   signal?: AbortSignal;
 }
 
+/** Response from `httpRequest()`. Non-2xx statuses resolve; check `status`. */
 export interface HttpResponse {
+  /** HTTP status code. */
   status: number;
+  /** Response headers (lower-case names). */
   headers: Record<string, string | string[] | undefined>;
   /** Body decoded as UTF-8. */
   body: string;

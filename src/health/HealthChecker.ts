@@ -4,14 +4,38 @@ import type { SmtpConfig } from '../types/smtp.js';
 import type { ImapConfig } from '../types/imap.js';
 import type { Logger } from '../logger/Logger.js';
 
-export interface SmtpHealth { ok: boolean; latencyMs: number; error?: string; }
-export interface ImapHealth  { ok: boolean; latencyMs: number; error?: string; }
+/** Result of an SMTP probe (connect + EHLO + NOOP). */
+export interface SmtpHealth {
+  /** `true` when connecting and logging in succeeded. */
+  ok: boolean;
+  /** Time taken, in ms. */
+  latencyMs: number;
+  /** Why the probe failed. */
+  error?: string;
+}
+/** Result of an IMAP probe (connect + login + SELECT INBOX). */
+export interface ImapHealth {
+  /** `true` when login and SELECT succeeded. */
+  ok: boolean;
+  /** Time taken, in ms. */
+  latencyMs: number;
+  /** Why the probe failed. */
+  error?: string;
+}
+/** Combined result of `check()`. Only configured protocols are present. */
 export interface HealthResult {
+  /** SMTP probe, when SMTP is configured. */
   smtp?: SmtpHealth;
+  /** IMAP probe, when IMAP is configured. */
   imap?: ImapHealth;
+  /** ISO 8601 time of the check. */
   timestamp: string;
 }
 
+/**
+ * Probes SMTP and IMAP connectivity with real logins — for liveness/readiness endpoints.
+ * `mail.health()` uses it; construct it directly for custom probes. Never throws; failures are reported.
+ */
 export class HealthChecker {
   constructor(
     private readonly smtpConfig: SmtpConfig | null,
@@ -19,6 +43,7 @@ export class HealthChecker {
     private readonly logger?: Logger,
   ) {}
 
+  /** Connect (including STARTTLS and login), NOOP and QUIT on a fresh connection. */
   async checkSmtp(): Promise<SmtpHealth> {
     if (!this.smtpConfig) return { ok: false, latencyMs: 0, error: 'SMTP not configured' };
     const t0 = Date.now();
@@ -34,6 +59,7 @@ export class HealthChecker {
     }
   }
 
+  /** Connect, log in, SELECT INBOX and log out on a fresh connection. */
   async checkImap(): Promise<ImapHealth> {
     if (!this.imapConfig) return { ok: false, latencyMs: 0, error: 'IMAP not configured' };
     const t0 = Date.now();
@@ -49,6 +75,7 @@ export class HealthChecker {
     }
   }
 
+  /** Probe every configured protocol in parallel. */
   async check(): Promise<HealthResult> {
     const result: HealthResult = { timestamp: new Date().toISOString() };
     const [smtp, imap] = await Promise.all([

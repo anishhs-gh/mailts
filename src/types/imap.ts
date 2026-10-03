@@ -3,9 +3,13 @@ import type { EmailAddress } from './core.js';
 import type { MailAuth } from './auth.js';
 import type { ImapLimits } from '../imap/ImapParser.js';
 
+/** Connection settings for `ImapClient`, `ImapSession`, `MailboxWatcher` and `ImapPool`. */
 export interface ImapConfig {
+  /** Server hostname, e.g. `imap.gmail.com`. */
   host: string;
+  /** Server port. @default 993 when `secure`, otherwise 143 */
   port?: number;
+  /** Connect with implicit TLS (port 993). `false` uses plain TCP + STARTTLS (see `requireTLS`). @default true */
   secure?: boolean;
   /** Credentials — password (`plain`/`login`) or OAuth (`xoauth2` with `token` or `getToken`). */
   auth: MailAuth;
@@ -51,12 +55,17 @@ export interface ImapConfig {
   keepAliveMs?: number;
 }
 
+/** State of a selected mailbox, returned by `open()` / `openReadOnly()`. */
 export interface ImapMailboxStatus {
+  /** Mailbox name as selected. */
   name: string;
+  /** Flags defined in the mailbox (`\\Seen`, `\\Flagged`, custom keywords…). */
   flags: string[];
   /** Flags the client may change permanently (`\\*` = new keywords allowed). */
   permanentFlags?: string[];
+  /** Number of messages in the mailbox. */
   exists: number;
+  /** Messages with the `\\Recent` flag (new since the last session). */
   recent: number;
   /**
    * Number of unseen messages. Only present when counted — `ImapSession.open()`
@@ -65,23 +74,37 @@ export interface ImapMailboxStatus {
   unseen?: number;
   /** Sequence number of the first unseen message (`[UNSEEN n]` from SELECT). */
   firstUnseen?: number;
+  /** UIDVALIDITY: when it changes, previously stored UIDs are no longer valid — resync. */
   uidValidity: number;
+  /** UID the next arriving message will get. */
   uidNext: number;
+  /** `true` when opened with EXAMINE (`openReadOnly()`) or the server refused write access. */
   readOnly: boolean;
   /** CONDSTORE: highest mod-sequence value in the mailbox. */
   highestModSeq?: number;
 }
 
+/** Parsed message headers (IMAP ENVELOPE). Encoded words are decoded. */
 export interface ImapEnvelope {
+  /** `Date` header, or `null` when missing or unparseable. */
   date: Date | null;
+  /** Decoded `Subject` (empty string when missing). */
   subject: string;
+  /** `From` addresses. */
   from: EmailAddress[];
+  /** `Sender` (the actual submitter when it differs from From). */
   sender: EmailAddress[];
+  /** `Reply-To` addresses. */
   replyTo: EmailAddress[];
+  /** `To` addresses. */
   to: EmailAddress[];
+  /** `Cc` addresses. */
   cc: EmailAddress[];
+  /** `Bcc` addresses (usually only present on sent/draft copies). */
   bcc: EmailAddress[];
+  /** `In-Reply-To` Message-ID, with angle brackets. */
   inReplyTo: string | null;
+  /** `Message-ID`, with angle brackets. */
   messageId: string | null;
   /**
    * Message-IDs from the `References` header, oldest first. Populated by
@@ -117,11 +140,17 @@ export interface ImapAttachment {
   };
 }
 
+/** A fetched message. Which fields are filled depends on the fetch options. */
 export interface ImapMessage {
+  /** Unique id within the mailbox (stable while `uidValidity` is unchanged). */
   uid: number;
+  /** Message sequence number (position; changes when messages are expunged). */
   seq: number;
+  /** Flags such as `\\Seen`, `\\Flagged`, `\\Answered`, `\\Draft` and custom keywords. */
   flags: string[];
+  /** Parsed headers. */
   envelope: ImapEnvelope;
+  /** Decoded body — filled by `fetch({ bodies: true })` or `textOnly: true`. */
   body?: {
     text?: string;
     html?: string;
@@ -129,12 +158,15 @@ export interface ImapMessage {
   };
   /** Populated when fetched with `structure: true`. Full MIME tree with section numbers. */
   structure?: import('../imap/ImapBodyStructure.js').BodyNode;
+  /** Size of the full message in bytes (RFC822.SIZE). */
   size: number;
+  /** When the server received the message (INTERNALDATE). */
   internalDate: Date | null;
   /** CONDSTORE: mod-sequence for this message. */
   modSeq?: number;
 }
 
+/** Result of `append()` / `appendMessage()`. Fields are set when the server supports UIDPLUS. */
 export interface ImapAppendResult {
   /** UIDVALIDITY of the destination mailbox (from APPENDUID). */
   uidValidity?: number;
@@ -142,17 +174,25 @@ export interface ImapAppendResult {
   uid?: number;
 }
 
+/** Counters from `getStatus()` (IMAP STATUS) — read without selecting the mailbox. Only requested items are set. */
 export interface ImapStatusResult {
+  /** Number of messages. */
   messages?: number;
+  /** Messages with `\\Recent`. */
   recent?: number;
+  /** Messages without `\\Seen`. */
   unseen?: number;
+  /** UID the next message will get. */
   uidNext?: number;
+  /** Current UIDVALIDITY. */
   uidValidity?: number;
+  /** CONDSTORE: highest mod-sequence. */
   highestModSeq?: number;
 }
 
 export type { BodyNode, BodyLeaf, BodyMultipart } from '../imap/ImapBodyStructure.js';
 
+/** What `ImapSession.fetch()` selects and how much of each message it downloads. */
 export interface ImapFetchOptions {
   /**
    * Mailbox to operate on.  Defaults to `'INBOX'` if no mailbox has been
@@ -160,10 +200,13 @@ export interface ImapFetchOptions {
    * already selected.
    */
   mailbox?: string;
+  /** `false` = unread only, `true` = read only, unset = all. */
   seen?: boolean;
   /** Additional search criteria (ignored when `uids` is given). */
   search?: ImapSearchCriteria;
+  /** Fetch exactly these UIDs (skips searching). */
   uids?: number[];
+  /** Sequence set, e.g. `'1:10'` or `'5,7,9'`. */
   seq?: string;
   /** Return only the newest `limit` matches (by UID). */
   limit?: number;
@@ -189,37 +232,66 @@ export interface ImapFetchOptions {
   textOnly?: boolean;
 }
 
+/**
+ * IMAP SEARCH criteria. All given criteria must match (AND); use `or` / `not` to combine.
+ * Text matches are case-insensitive substrings; non-ASCII is sent as UTF-8.
+ */
 export interface ImapSearchCriteria {
+  /** Has `\\Seen`. */
   seen?: boolean;
+  /** Lacks `\\Seen`. */
   unseen?: boolean;
+  /** Has `\\Flagged`. */
   flagged?: boolean;
+  /** Lacks `\\Flagged`. */
   unflagged?: boolean;
+  /** Has `\\Answered`. */
   answered?: boolean;
+  /** Has `\\Deleted` (marked, not yet expunged). */
   deleted?: boolean;
+  /** Has `\\Draft`. */
   draft?: boolean;
+  /** `From` contains this text. */
   from?: string;
+  /** `To` contains this text. */
   to?: string;
+  /** `Cc` contains this text. */
   cc?: string;
+  /** `Subject` contains this text. */
   subject?: string;
+  /** Body contains this text. */
   body?: string;
+  /** Headers or body contain this text. */
   text?: string;
+  /** Received on or after this date (date part only, server time zone). */
   since?: Date;
+  /** Received before this date. */
   before?: Date;
+  /** `Date` header on or after this date. */
   sentSince?: Date;
+  /** `Date` header before this date. */
   sentBefore?: Date;
+  /** Larger than this many bytes. */
   larger?: number;
+  /** Smaller than this many bytes. */
   smaller?: number;
+  /** UID set, e.g. `'100:*'`. */
   uid?: string;
+  /** Header `name` contains `value`. */
   header?: { name: string; value: string };
+  /** Messages that do not match these criteria. */
   not?: ImapSearchCriteria;
+  /** Messages matching either set of criteria. */
   or?: [ImapSearchCriteria, ImapSearchCriteria];
 }
 
+/** A mailbox from `listMailboxes()` / `listSubscribed()`. */
 export interface ImapListEntry {
   /** Mailbox name (modified UTF-7 decoded). */
   name: string;
   /** Hierarchy delimiter; `''` when the server reports NIL (flat namespace). */
   delimiter: string;
+  /** LIST attributes, e.g. `\\HasChildren`, `\\Noselect`, `\\Sent`. */
   flags: string[];
   /** RFC 6154 special-use attribute, e.g. `\\Sent`, `\\Drafts`, `\\Trash`. */
   specialUse?: string;

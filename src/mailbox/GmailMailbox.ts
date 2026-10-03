@@ -15,6 +15,7 @@ import {
   type MailWatcher,
 } from './Mailbox.js';
 
+/** Options for `new GmailMailbox()`. */
 export interface GmailMailboxConfig {
   /** Account address. Also passed to `getToken`. */
   user: string;

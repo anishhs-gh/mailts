@@ -1,6 +1,6 @@
-# Migrating to @mailts/core 0.5
+# Migrating to @mailts/core 1.0 (from 0.4)
 
-0.5 fixes data-loss and security bugs. Most code keeps working unchanged; the items below are the
+1.0 fixes data-loss and security bugs and is the first release covered by semantic versioning. Most code keeps working unchanged; the items below are the
 behaviour changes to check. Tracking issue: [#17](https://github.com/anishhs-gh/mailts/issues/17).
 
 ## Requirements
@@ -9,7 +9,7 @@ behaviour changes to check. Tracking issue: [#17](https://github.com/anishhs-gh/
 
 ## Behaviour changes
 
-| Area | 0.4 | 0.5 | What to do |
+| Area | 0.4 | 1.0 | What to do |
 |---|---|---|---|
 | `fetch({ bodies: true })` | Set `\Seen` on every fetched message (RFC822 fetch) | Never marks mail read (`BODY.PEEK[]`) | Pass `markSeen: true` if you relied on it |
 | `shutdown()` (queue and `MailTs`) | Cancelled all pending mail | In-memory: delivers pending mail; persistent: keeps it for the next start | Pass `{ pending: 'cancel' }` to discard; `{ timeoutMs }` to bound the wait |

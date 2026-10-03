@@ -22,6 +22,7 @@ function loadSqlite(): { DatabaseSync: new (path: string, opts?: unknown) => Dat
   }
 }
 
+/** File used for `queue.persist`: the given path, or `~/.mailts/queue.db` for `true`. */
 export function resolveQueueDbPath(persist: string | boolean): string {
   if (typeof persist === 'string') return persist;
   return join(homedir(), '.mailts', 'queue.db');

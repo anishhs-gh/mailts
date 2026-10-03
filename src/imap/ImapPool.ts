@@ -4,6 +4,7 @@ import type { Logger } from '../logger/Logger.js';
 import type { ImapConfig } from '../types/imap.js';
 import { ImapAuthError, ImapError } from '../errors.js';
 
+/** Limits and timeouts for `ImapPool`. */
 export interface ImapPoolOptions {
   /** Open sessions across all accounts. Default `100`. */
   maxSessions?: number;
@@ -18,16 +19,22 @@ export interface ImapPoolOptions {
   acquireTimeoutMs?: number;
   /** `attachmentPolicy` for `appendMessage()` on pooled sessions (unset rejects `path`). */
   attachmentPolicy?: AttachmentPathPolicy;
+  /** Logger passed to every pooled session. */
   logger?: Logger;
 }
 
 /** IMAP config, or a function returning it — called only when a new session is opened. */
 export type ImapConfigSource = ImapConfig | (() => ImapConfig | Promise<ImapConfig>);
 
+/** Snapshot from `pool.stats()`. */
 export interface ImapPoolStats {
+  /** Accounts with at least one open session. */
   accounts: number;
+  /** Open sessions in total. */
   sessions: number;
+  /** Sessions lent to a `use()` callback right now. */
   busy: number;
+  /** `use()` calls waiting for a session. */
   waiting: number;
 }
 
@@ -124,6 +131,7 @@ export class ImapPool {
     await this.settle();
   }
 
+  /** Current counts — for metrics and health endpoints. */
   stats(): ImapPoolStats {
     let sessions = 0;
     let busy = 0;

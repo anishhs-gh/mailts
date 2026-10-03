@@ -11,6 +11,7 @@ export interface ICalAttendee {
   role?: ICalAttendeeRole;
 }
 
+/** A calendar event sent as an invite (`EmailOptions.ical`) — rendered as an event card with RSVP by most clients. */
 export interface ICalEvent {
   /** iCal method. @default 'REQUEST' */
   method?: ICalMethod;

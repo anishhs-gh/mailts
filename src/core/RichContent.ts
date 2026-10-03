@@ -9,7 +9,9 @@ import type { EmailOptions } from '../types/core.js';
 
 /** A JSON-LD node. `@context` defaults to `https://schema.org`. */
 export interface JsonLd {
+  /** Vocabulary URL. @default 'https://schema.org' */
   '@context'?: string;
+  /** schema.org type, e.g. `Order`, `ParcelDelivery`, `EventReservation`. */
   '@type': string;
   [key: string]: unknown;
 }
@@ -104,11 +106,17 @@ function need(value: unknown, name: string): void {
   if (value === undefined || value === null || value === '') throw new MimeError(`schemaOrg: "${name}" is required`);
 }
 
+/** A postal address (schema.org `PostalAddress`). */
 export interface PostalAddressInput {
+  /** Street and number. */
   street?: string;
+  /** City. */
   locality?: string;
+  /** State / province / region. */
   region?: string;
+  /** Postal / ZIP code. */
   postalCode?: string;
+  /** Country name or ISO 3166-1 code. */
   country?: string;
 }
 
@@ -126,6 +134,7 @@ function postalAddress(a: PostalAddressInput | string | undefined): unknown {
 
 const org = (name: string, extra: Record<string, unknown> = {}) => clean({ '@type': 'Organization', name, ...extra });
 
+/** Order state, mapped to schema.org `OrderStatus` values (`processing` → `OrderProcessing`…). */
 export type OrderStatus =
   | 'processing' | 'in-transit' | 'delivered' | 'pickup-available' | 'payment-due' | 'problem' | 'returned' | 'cancelled';
 
@@ -140,16 +149,25 @@ const ORDER_STATUS: Record<OrderStatus, string> = {
   'cancelled': 'OrderCancelled',
 };
 
+/** A purchased or shipped item. */
 export interface ProductInput {
+  /** Product name. */
   name: string;
+  /** Your stock-keeping unit. */
   sku?: string;
+  /** Product page. */
   url?: string;
+  /** Product image URL. */
   image?: string;
+  /** Unit price. */
   price?: number | string;
+  /** ISO 4217 currency, e.g. `EUR`. Defaults to the order's currency. */
   priceCurrency?: string;
+  /** Quantity ordered. */
   quantity?: number;
 }
 
+/** Reservation state, mapped to schema.org `ReservationStatusType` (`confirmed` → `ReservationConfirmed`…). */
 export type ReservationStatus = 'confirmed' | 'cancelled' | 'pending' | 'hold';
 
 const RESERVATION_STATUS: Record<ReservationStatus, string> = {

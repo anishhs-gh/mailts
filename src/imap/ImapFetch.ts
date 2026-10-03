@@ -9,15 +9,27 @@ import { bodyStructureFromToken, type BodyNode } from './ImapBodyStructure.js';
 import { parseMessage, MimeHeaders, parseMessageIds, envelopeFromHeaders } from '../core/MimeParser.js';
 import type { ImapEnvelope, ImapMessage } from '../types/imap.js';
 
-/** Decoded FETCH attributes for one message. */
+/**
+ * Decoded FETCH attributes for one message.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export interface FetchAttributes {
+  /** Message sequence number. */
   seq: number;
+  /** UID, when requested. */
   uid?: number;
+  /** FLAGS, when requested. */
   flags?: string[];
+  /** RFC822.SIZE in bytes. */
   size?: number;
+  /** INTERNALDATE. */
   internalDate?: Date | null;
+  /** CONDSTORE MODSEQ. */
   modSeq?: number;
+  /** Parsed ENVELOPE. */
   envelope?: ImapEnvelope;
+  /** Parsed BODYSTRUCTURE. */
   bodyStructure?: BodyNode;
   /**
    * Body sections keyed by normalised section spec (`''` = whole message,
@@ -34,6 +46,8 @@ export function normalizeSection(section: string): string {
 /**
  * Decode an untagged FETCH response (`"<seq> FETCH (…)"`).
  * Returns `null` when `data` is not a FETCH response.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
  */
 export function parseFetchAttributes(data: string): FetchAttributes | null {
   const m = /^(\d+)\s+FETCH\s+/i.exec(data);
@@ -96,7 +110,11 @@ export function envelopeFromToken(tok: ImapToken | undefined): ImapEnvelope {
   };
 }
 
-/** Parse a FETCH response data string into an ImapMessage. */
+/**
+ * Parse a FETCH response data string into an ImapMessage.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export function parseFetchResponse(seq: number, data: string): Partial<ImapMessage> {
   const attrs = parseFetchAttributes(/^\d+\s+FETCH\s/i.test(data) ? data : `${seq} FETCH ${data}`);
   if (!attrs) return { seq };
@@ -137,6 +155,8 @@ export function messageFromAttributes(a: FetchAttributes): Partial<ImapMessage> 
 /**
  * Extract raw bytes for a specific BODY[section] from a FETCH response data string.
  * Returns null if the section is not present; an empty buffer when the server sent NIL.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
  */
 export function parseSectionResponse(data: string, section: string): Buffer | null {
   const attrs = parseFetchAttributes(/^\d+\s+FETCH\s/i.test(data) ? data : `0 FETCH ${data}`);

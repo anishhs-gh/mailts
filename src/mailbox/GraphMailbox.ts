@@ -18,6 +18,10 @@ import {
 } from './Mailbox.js';
 
 
+/**
+ * Options for `new GraphMailbox()`.
+ * @experimental Not yet verified against a live Microsoft 365 tenant.
+ */
 export interface GraphMailboxConfig {
   /** Mailbox (UPN / email). Also passed to `getToken`. */
   user: string;

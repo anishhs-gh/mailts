@@ -1,5 +1,6 @@
 import * as net from 'net';
 
+/** Proxy for the SMTP connection (`SmtpConfig.proxy`). */
 export interface ProxyConfig {
   /** Proxy protocol. */
   type: 'http' | 'socks5' | 'socks4';

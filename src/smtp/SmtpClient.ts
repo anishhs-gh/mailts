@@ -44,12 +44,15 @@ interface PendingReply {
 export interface SmtpSendResult {
   /** Queue id from the final 250 reply, when the server reports one. */
   serverId: string;
+  /** Recipients the server accepted. */
   accepted: string[];
+  /** Recipients the server refused (see `rejectedErrors`). */
   rejected: string[];
   /** Per-recipient rejection replies, e.g. `550 5.1.1 No such user`. */
   rejectedErrors: SmtpError[];
 }
 
+/** Per-message SMTP extensions for `SmtpClient.send()`. */
 export interface SmtpSendOptions {
   /** Declare 8BITMIME body (`BODY=8BITMIME`). */
   eightBit?: boolean;
@@ -81,6 +84,7 @@ export class SmtpClient extends EventEmitter {
   private redactor: Redactor;
   private messagesSent = 0;
 
+  /** The configuration this client was created with. */
   readonly config: SmtpConfig;
   private readonly logger: Logger | null;
 

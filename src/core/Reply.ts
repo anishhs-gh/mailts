@@ -76,9 +76,13 @@ function defaultQuoteHeader(env: ImapEnvelope): string {
 
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
+/** Options for `buildReply()`. */
 export interface ReplyOptions {
+  /** Your address (the reply's sender). */
   from: EmailAddress;
+  /** Reply text, placed above the quote. */
   text?: string;
+  /** Reply html, placed above the quoted html. */
   html?: string;
   /** Reply to everyone: original To and Cc (minus yourself) are included. @default false */
   replyAll?: boolean;
@@ -88,6 +92,7 @@ export interface ReplyOptions {
   quoteHeader?: (envelope: ImapEnvelope) => string;
   /** Your addresses (aliases) to drop from reply-all. Defaults to `from`. */
   me?: string[];
+  /** Files to attach to the reply. */
   attachments?: Attachment[];
 }
 
@@ -152,11 +157,17 @@ export function buildReply(original: SourceMessage, opts: ReplyOptions): EmailOp
   };
 }
 
+/** Options for `buildForward()`. */
 export interface ForwardOptions {
+  /** Your address (the forward's sender). */
   from: EmailAddress;
+  /** Recipients of the forward. */
   to: EmailAddress | EmailAddress[];
+  /** Cc recipients. */
   cc?: EmailAddress | EmailAddress[];
+  /** Your note above the forwarded message. */
   text?: string;
+  /** Your note as html. */
   html?: string;
   /**
    * `inline` (default): quote the original with a forwarded-message header and
@@ -166,6 +177,7 @@ export interface ForwardOptions {
   mode?: 'inline' | 'attachment';
   /** Original RFC 5322 source (`session.fetchRaw(uid)`), required for `mode: 'attachment'`. */
   raw?: Buffer;
+  /** Extra files to attach. */
   attachments?: Attachment[];
 }
 

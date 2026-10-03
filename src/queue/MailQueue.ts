@@ -19,6 +19,7 @@ import type { EmailOptions, SendResult } from '../types/core.js';
 import type { Logger } from '../logger/Logger.js';
 import { MailTsError, QueueError } from '../errors.js';
 
+/** Function that delivers one job (`queue.setSendFn()`); must honour `signal`. */
 export type SendFn = (options: EmailOptions, signal?: AbortSignal) => Promise<SendResult>;
 
 const PRIORITY_ORDER: JobPriority[] = ['critical', 'high', 'normal', 'low'];
@@ -49,6 +50,7 @@ export class MailQueue extends EventEmitter {
   private succeeded = 0;
   private cancelledCount = 0;
   protected readonly policy: RetryPolicy;
+  /** Jobs that exhausted their retries. */
   readonly dlq: DeadLetterQueue;
   private readonly concurrency: number;
   private readonly jobTimeout: number;
@@ -341,6 +343,7 @@ export class MailQueue extends EventEmitter {
     this.tick();
   }
 
+  /** Alias of `resume()`. */
   play(): void { this.resume(); }
 
   /** Pause — in-flight jobs finish, no new jobs start. Pending `drain()` calls reject. */
@@ -349,6 +352,7 @@ export class MailQueue extends EventEmitter {
     this.checkDrained();
   }
 
+  /** `true` after `pause()` until `resume()`. */
   get isPaused(): boolean {
     return this.paused;
   }
@@ -388,6 +392,7 @@ export class MailQueue extends EventEmitter {
     return true;
   }
 
+  /** Interrupt every running job. Returns the count. */
   interruptAll(): number {
     let n = 0;
     for (const ctrl of this.controllers.values()) { ctrl.interrupt(); n++; }
@@ -402,6 +407,7 @@ export class MailQueue extends EventEmitter {
     return true;
   }
 
+  /** Abort every running job (each counts as a failed attempt). */
   abortAll(): void {
     for (const ctrl of this.controllers.values()) ctrl.abort();
   }

@@ -7,7 +7,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 
 ### Changed
 - Requires Node.js 22+ (was 18). Node 18 and 20 are end-of-life.
-- Aligned with `@mailts/core` 0.5: peer `@mailts/core` `>=0.5.0 <2.0.0`, dependency `@mailts/trap` `>=1.1.0 <2.0.0`.
+- Aligned with `@mailts/core` 1.0: peer `@mailts/core` `>=1.0.0 <2.0.0`, dependency `@mailts/trap` `>=1.1.0 <2.0.0`.
 
 ## [0.1.0] — 2026-04-25
 

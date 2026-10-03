@@ -1,6 +1,7 @@
 import type { EmailOptions } from './core.js';
 import type { MailTsError } from '../errors.js';
 
+/** How retry delays grow: `fixed` (same each time), `linear` (×attempt) or `exponential` (×2^attempt). */
 export type RetryBackoff = 'linear' | 'exponential' | 'fixed';
 
 /** Scheduling priority for a queued job. Higher tiers are drained first. */
@@ -32,6 +33,7 @@ export interface EnqueueOptions {
 /** What `shutdown()` does with jobs that have not started. */
 export type ShutdownPendingMode = 'drain' | 'keep' | 'cancel';
 
+/** Options for `queue.shutdown()` / `mail.shutdown()`. */
 export interface ShutdownOptions {
   /** Max time to wait for running jobs (and, with `drain`, for pending ones). */
   timeoutMs?: number;
@@ -39,6 +41,7 @@ export interface ShutdownOptions {
   pending?: ShutdownPendingMode;
 }
 
+/** What `shutdown()` did. */
 export interface ShutdownResult {
   /** Jobs cancelled by this shutdown. */
   cancelled: number;
@@ -60,6 +63,7 @@ export interface DeadLetterOptions {
   maxAge?: number;
 }
 
+/** Queue behaviour for `MailTs({ queue })`, `MailQueue`, `SqliteQueue` and `MailWorker`. */
 export interface QueueOptions {
   /** Max parallel send operations. @default 3 */
   concurrency?: number;
@@ -78,6 +82,7 @@ export interface QueueOptions {
    * transient failure and applying retry logic. @default 30_000
    */
   jobTimeout?: number;
+  /** Dead-letter queue for jobs that exhausted their retries. @default { enabled: true } */
   deadLetter?: DeadLetterOptions;
   /** Persist queue state to disk for cross-process visibility and crash recovery.
    *  Pass `true` for `~/.mailts/queue.db` (SQLite, Node 22+) or a custom file path. */
@@ -105,13 +110,24 @@ export interface RateLimitOptions {
   countRecipients?: boolean;
 }
 
+/** A queued email and its delivery state. */
 export interface QueueJob {
+  /** Job id — stable across restarts for `SqliteQueue`. */
   readonly id: string;
+  /** The email to send. */
   readonly options: EmailOptions;
+  /** Send attempts made so far. */
   attempts: number;
+  /** Error from each failed attempt, oldest first. */
   errors: MailTsError[];
+  /** When the job was enqueued. */
   createdAt: Date;
+  /** When the last attempt started, or `null` before the first. */
   lastAttemptAt: Date | null;
+  /**
+   * `pending` (ready) → `running` → `success`; failures go back to `scheduled` (waiting for a
+   * retry delay, `sendAt` or the rate limit) until retries run out (`dead`). `cancelled` never sends.
+   */
   status: 'pending' | 'scheduled' | 'running' | 'success' | 'dead' | 'cancelled';
   /** For `scheduled` jobs: not sent before this time (retry backoff, `sendAt` or rate limit). */
   notBefore?: Date;
@@ -123,12 +139,17 @@ export interface QueueJob {
   cancelledAt?: Date;
 }
 
+/** Job counts by state. */
 export interface QueueStats {
+  /** Jobs ready to send. */
   pending: number;
   /** Jobs waiting for a retry delay or a `sendAt` time. */
   scheduled: number;
+  /** Jobs being sent now. */
   running: number;
+  /** Jobs delivered. */
   succeeded: number;
+  /** Jobs that exhausted their retries (in the dead-letter queue). */
   dead: number;
   /** Jobs removed via `cancel()` / `cancelAll()` since this queue instance started. */
   cancelled: number;

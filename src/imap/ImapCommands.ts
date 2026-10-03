@@ -54,7 +54,11 @@ const FLAG_RE = /^\\?[^\s(){%*"\\\]\x00-\x1f\x7f]+$/;
 const SEQ_SET_RE = /^(\d+|\*)(:(\d+|\*))?(,(\d+|\*)(:(\d+|\*))?)*$/;
 const ATOM_RE = /^[A-Za-z0-9.\-_]+$/;
 
-/** Validate flags/keywords so user input can never inject protocol syntax. */
+/**
+ * Validate flags/keywords so user input can never inject protocol syntax.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export function checkFlags(flags: readonly string[]): string {
   for (const f of flags) {
     if (!FLAG_RE.test(f)) throw new ImapError(`Invalid IMAP flag: ${JSON.stringify(f)}`);
@@ -72,7 +76,11 @@ function checkAtom(v: string, what: string): string {
   return v;
 }
 
-/** Build SEARCH criteria as command parts (literals for non-ASCII text). */
+/**
+ * Build SEARCH criteria as command parts (literals for non-ASCII text).
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export function buildSearchParts(query: ImapSearchQuery): CommandPart[] {
   const parts: CommandPart[] = [];
   const kw = (k: string) => parts.push(k);
@@ -140,12 +148,20 @@ export function renderParts(parts: readonly CommandPart[]): string {
     .join('');
 }
 
-/** @deprecated Use `buildSearchParts` — this renders non-ASCII text as a quoted string. */
+/**
+ * @deprecated Use `buildSearchParts` — this renders non-ASCII text as a quoted string.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export function buildSearchCommand(query: ImapSearchQuery): string {
   return renderParts(buildSearchParts(query));
 }
 
-/** Structured command builders used by `ImapClient`. */
+/**
+ * Structured command builders used by `ImapClient`.
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export const ImapParts = {
   login: (user: string, pass: string): CommandPart[] => ['LOGIN', astring(user), astring(pass)],
   select: (mailbox: string, condstore = false): CommandPart[] =>
@@ -181,7 +197,11 @@ export const ImapParts = {
   ],
 };
 
-/** Legacy string builders (kept for compatibility; prefer `ImapParts`). */
+/**
+ * Legacy string builders (kept for compatibility; prefer `ImapParts`).
+ *
+ * **Low-level** — not covered by semantic versioning; may change in a minor release.
+ */
 export const ImapCmd = {
   capability:   () => 'CAPABILITY',
   noop:         () => 'NOOP',
