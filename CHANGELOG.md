@@ -30,6 +30,7 @@ First stable release: correctness and security fixes, OAuth, one mailbox API for
 - Buffers and Dates did not survive persistence (new versioned `JobCodec`; streams are rejected at enqueue).
 - Retry backoff held a concurrency slot; retries are now scheduled and free the slot.
 - `drain()` hung while paused; `shutdown(timeout)` could hang after aborting a job.
+- `shutdown({ timeoutMs })` could wait forever when the event loop had just been blocked (e.g. synchronous SQLite writes on a busy machine): the timeout timer fired by libuv's stale loop clock before `Date.now()` reached the deadline and was never re-armed.
 - Queued sends bypassed `devMode` (real mail was sent in dev mode) and middleware.
 - `MailWorker` pulled the whole external queue into memory, spun on empty `dequeue()`, and crashed the process on an `ack`/`nack` rejection.
 - `configure()` leaked replaced pools and SQLite handles; documented queue defaults did not match the code.

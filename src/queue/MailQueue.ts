@@ -457,16 +457,26 @@ export class MailQueue extends EventEmitter {
     return this.pendingCount + this.runningJobs.size + this.scheduled.size;
   }
 
+  /**
+   * Resolve when `cond()` holds or `deadline` (epoch ms) passes. Timers run on libuv's cached
+   * loop clock, which lags `Date.now()` after the event loop was blocked, so a timer can fire
+   * before the deadline — re-arm until it has really passed instead of waiting forever.
+   */
   private waitUntil(cond: () => boolean, deadline: number): Promise<void> {
     return new Promise(resolve => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let done = false;
       const check = () => {
-        if (cond() || Date.now() >= deadline) {
-          this.off('_settled', check);
-          clearTimeout(timer);
-          resolve();
-        }
+        if (done || !(cond() || Date.now() >= deadline)) return;
+        done = true;
+        this.off('_settled', check);
+        if (timer) clearTimeout(timer);
+        resolve();
       };
-      const timer = deadline === Infinity ? undefined : setTimeout(check, Math.max(0, deadline - Date.now()));
+      const arm = () => {
+        timer = setTimeout(() => { check(); if (!done) arm(); }, Math.max(1, deadline - Date.now()));
+      };
+      if (deadline !== Infinity) arm();
       this.on('_settled', check);
       check();
     });

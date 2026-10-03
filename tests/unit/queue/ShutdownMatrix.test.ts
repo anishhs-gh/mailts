@@ -2,7 +2,7 @@
  * Plan §4 shutdown matrix: drain / keep / cancel × in-memory / SQLite × with / without timeout.
  * None may hang (vitest timeout), and mail is only discarded with `cancel`.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { rmSync } from 'fs';
@@ -22,11 +22,17 @@ for (const kind of kinds) {
       it(`${kind} · ${pending} · ${timeoutMs ? 'timeout' : 'no timeout'}`, async () => {
         const db = join(tmpdir(), `mailts-matrix-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
         let sent = 0;
-        // The first job is slow (exceeds the timeout); the rest are fast.
-        const send = async () => {
+        // The first job runs until the test releases it (or the queue aborts it), so slow setup —
+        // synchronous SQLite writes on a busy CI disk — can never let it finish early. The rest are fast.
+        let release!: () => void;
+        const gate = new Promise<void>(r => { release = r; });
+        const send = async (_opts: unknown, signal?: AbortSignal) => {
           const n = ++sent;
-          // The first job outlives the setup (and, with a timeout, the timeout); the rest are fast.
-          await new Promise(r => setTimeout(r, n === 1 ? (timeoutMs ? 400 : 150) : 5));
+          if (n === 1) {
+            await Promise.race([gate, new Promise<void>(r => signal?.addEventListener('abort', () => r(), { once: true }))]);
+          } else {
+            await new Promise(r => setTimeout(r, 5));
+          }
           return ok;
         };
         const q: MailQueue = kind === 'sqlite' ? new SqliteQueue(db, { concurrency: 1 }, undefined, send) : new MailQueue({ concurrency: 1 });
@@ -36,7 +42,10 @@ for (const kind of kinds) {
         await started; // first job running, the other two pending
 
         const t0 = Date.now();
-        const res = await q.shutdown({ pending, timeoutMs });
+        const shutdown = q.shutdown({ pending, timeoutMs });
+        // Without a timeout the slow job must finish on its own; with one, the queue interrupts it.
+        if (!timeoutMs) setTimeout(release, 50);
+        const res = await shutdown;
         const took = Date.now() - t0;
 
         if (pending === 'cancel') {
@@ -64,3 +73,24 @@ for (const kind of kinds) {
     }
   }
 }
+
+describe('shutdown timeout timer', () => {
+  it('still fires when the timer runs before Date.now() reaches the deadline (blocked event loop)', async () => {
+    // After a long synchronous stretch, timers run on libuv's stale loop clock and can fire
+    // before Date.now() has reached the deadline. Freeze Date.now() to reproduce that exactly.
+    const realNow = Date.now.bind(Date);
+    const frozenAt = realNow();
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => (realNow() - frozenAt < 200 ? frozenAt : realNow()));
+    try {
+      const q = new MailQueue({ concurrency: 1 });
+      q.setSendFn((_o, signal) => new Promise(r => signal?.addEventListener('abort', () => r(ok), { once: true })));
+      const started = new Promise(r => q.once('started', r));
+      q.enqueue(opts);
+      await started;
+      const res = await q.shutdown({ pending: 'keep', timeoutMs: 40 });
+      expect(res.remaining).toBe(1);   // the never-ending job was interrupted back to pending
+    } finally {
+      now.mockRestore();
+    }
+  }, 3_000);
+});
