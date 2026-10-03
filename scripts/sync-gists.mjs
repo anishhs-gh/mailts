@@ -5,12 +5,15 @@
  * Matches existing gists by description; creates if not found.
  *
  * Requires: GIST_TOKEN env var (PAT with `gist` scope)
+ *
+ *   node scripts/sync-gists.mjs --dry-run   # no token: check metadata and import rewriting only
  */
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
+const DRY_RUN = process.argv.includes('--dry-run');
 const TOKEN = process.env.GIST_TOKEN;
-if (!TOKEN) { console.error('GIST_TOKEN not set'); process.exit(1); }
+if (!TOKEN && !DRY_RUN) { console.error('GIST_TOKEN not set'); process.exit(1); }
 
 const EXAMPLES_DIR = new URL('../examples', import.meta.url).pathname;
 const REPO = 'https://github.com/anishhs-gh/mailts';
@@ -247,22 +250,20 @@ const META = {
 
 // ── Import rewriting ─────────────────────────────────────────────────────────
 
-const LOCAL_IMPORTS = [
-  /from '\.\.\/src\/index\.js'/g,
-  /from '\.\.\/src\/types\/index\.js'/g,
-  /from '\.\.\/src\/types\/core\.js'/g,
-  /from '\.\.\/src\/errors\.js'/g,
-  /from '\.\.\/src\/transports\/index\.js'/g,
-  /from '\.\.\/src\/transports\/Transport\.js'/g,
-];
+// Package subpaths published by @mailts/core (package.json "exports").
+const SUBPATHS = ['smtp', 'imap', 'queue', 'logger', 'transports', 'oauth', 'mailbox'];
 
-const DYNAMIC_IMPORT = /await import\('\.\.\/src\/errors\.js'\)/g;
+/** '../src/…' → the published import ('@mailts/core' or '@mailts/core/<subpath>'). */
+function packageSpecifier(rel) {
+  const m = /^\.\.\/src\/([a-z]+)\/index\.js$/.exec(rel);
+  if (m && SUBPATHS.includes(m[1])) return `@mailts/core/${m[1]}`;
+  return '@mailts/core';   // src/index.js, types, errors, single files re-exported from the root
+}
 
 function rewriteImports(src) {
-  let out = src;
-  for (const re of LOCAL_IMPORTS) out = out.replace(re, "from '@mailts/core'");
-  out = out.replace(DYNAMIC_IMPORT, "await import('@mailts/core')");
-  return out;
+  return src
+    .replace(/from '(\.\.\/src\/[^']+)'/g, (_, rel) => `from '${packageSpecifier(rel)}'`)
+    .replace(/import\('(\.\.\/src\/[^']+)'\)/g, (_, rel) => `import('${packageSpecifier(rel)}')`);
 }
 
 // ── Install hint injection ───────────────────────────────────────────────────
@@ -354,6 +355,19 @@ async function upsertGist(id, description, filename, tsContent, readmeContent) {
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 const files = readdirSync(EXAMPLES_DIR).filter(f => f.endsWith('.ts'));
+
+if (DRY_RUN) {
+  let problems = 0;
+  for (const file of files) {
+    if (!META[file]) { console.error(`  missing metadata: ${file}`); problems++; continue; }
+    const out = rewriteImports(readFileSync(join(EXAMPLES_DIR, file), 'utf8'));
+    const left = out.match(/from '\.\.?\/[^']*'|import\('\.\.?\/[^']*'\)/g);
+    if (left) { console.error(`  unresolved local import in ${file}: ${left.join(', ')}`); problems++; }
+  }
+  console.log(`${files.length} examples checked, ${problems} problem(s)`);
+  process.exit(problems ? 1 : 0);
+}
+
 const existing = await fetchExisting();
 
 let created = 0, updated = 0, skipped = 0;

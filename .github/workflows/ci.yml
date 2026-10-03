@@ -32,6 +32,9 @@ jobs:
       - name: Agent skill matches README
         run: npm run skill:build -- --check
 
+      - name: Example gists resolve
+        run: node scripts/sync-gists.mjs --dry-run
+
       - name: Audit
         run: npm audit --audit-level=high --omit=dev
 
