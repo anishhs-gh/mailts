@@ -159,6 +159,20 @@ const META = {
     run:         'DATABASE_URL=postgres://… SMTP_HOST=… SMTP_USER=… SMTP_PASS=… npx tsx queue-driver-postgres.ts',
     features:    ['FOR UPDATE SKIP LOCKED — one instance per job', 'Leases recover jobs from crashed instances', 'Idempotency keys across instances', 'Graceful SIGTERM shutdown'],
   },
+  'rich-inbox-email.ts': {
+    description: '@mailts/core — Gmail order & parcel cards, inbox actions, Promotions annotations, AMP for Email, Outlook Actionable Messages | typescript email schema.org json-ld amp',
+    title:       'Smart inbox email: schema.org, AMP and Adaptive Cards',
+    install:     'npm install @mailts/core',
+    run:         'SMTP_USER=you@gmail.com SMTP_PASS=<app password> npx tsx rich-inbox-email.ts',
+    features:    ['schemaOrg.order / parcelDelivery / reservations', 'viewAction inbox button', 'Promotions discountOffer + promotionCard', 'AMP part with html fallback', 'Outlook Adaptive Card'],
+  },
+  'otp-email.ts': {
+    description: '@mailts/core — one-time-code emails that Gmail, Apple Mail and Outlook recognise | typescript otp verification email',
+    title:       'OTP / verification code email',
+    install:     'npm install @mailts/core',
+    run:         'SMTP_USER=you@gmail.com SMTP_PASS=<app password> npx tsx otp-email.ts',
+    features:    ['Code in subject for client detection', 'Plain-text part', 'crypto.randomInt codes', 'Expiry stated'],
+  },
   'oauth-app-only.ts': {
     description: '@mailts/core — organisation-wide mailbox access: Google service account + Microsoft client credentials | typescript email oauth2 workspace',
     title:       'App-only OAuth — Google Workspace / Microsoft 365 without user sign-in',

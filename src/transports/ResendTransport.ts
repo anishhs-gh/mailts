@@ -1,5 +1,5 @@
 import { httpRequest } from './HttpClient.js';
-import { toAddressStrings, resolveApiAttachments, apiHeaders, assertOk, parseJson, request } from './utils.js';
+import { jsonBodyOptions, toAddressStrings, resolveApiAttachments, apiHeaders, assertOk, parseJson, request } from './utils.js';
 import type { Transport, TransportResult } from './Transport.js';
 import type { BuiltMessage } from '../core/Message.js';
 import type { EmailOptions } from '../types/core.js';
@@ -30,6 +30,7 @@ export class ResendTransport implements Transport {
   }
 
   async send(message: BuiltMessage, options: EmailOptions, signal?: AbortSignal): Promise<TransportResult> {
+    options = jsonBodyOptions(options, 'Resend');
     const from = toAddressStrings(options.from ?? message.from)[0] ?? message.from;
     const attachments = await resolveApiAttachments(options.attachments ?? []);
 

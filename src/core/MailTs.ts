@@ -1,6 +1,7 @@
 import { SmtpPool } from '../smtp/SmtpPool.js';
 import { SmtpClient, type SmtpSendResult } from '../smtp/SmtpClient.js';
 import { buildMessage, type BuiltMessage } from './Message.js';
+import { applyRichContent } from './RichContent.js';
 import { resolveAttachment, type AttachmentPathPolicy } from './Attachment.js';
 import { signDkim } from './Dkim.js';
 import { TemplateRenderer } from './Template.js';
@@ -433,6 +434,8 @@ export class MailTs {
   ): Promise<SendResult> {
     const t0 = Date.now();
     try {
+      // Render structured data into html once, so MIME and JSON-API transports carry the same body.
+      options = applyRichContent(options);
       const message = await this.build(options);
       let result: SendResult & { ok: true };
 

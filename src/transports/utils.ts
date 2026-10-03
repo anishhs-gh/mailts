@@ -2,7 +2,8 @@ import type { EmailAddress, Attachment, EmailOptions } from '../types/core.js';
 import type { BuiltMessage } from '../core/Message.js';
 import { resolveAttachment } from '../core/Attachment.js';
 import { MimeHeaders } from '../core/MimeParser.js';
-import { TransportError } from '../errors.js';
+import { MimeError, TransportError } from '../errors.js';
+import { applyRichContent } from '../core/RichContent.js';
 import type { HttpResponse } from './HttpClient.js';
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -93,6 +94,17 @@ export interface ResolvedApiAttachment {
   contentType: string;
   cid?: string;
   data: Buffer;
+}
+
+/**
+ * Options for JSON-payload transports: structured data / Adaptive Cards rendered into
+ * `html` (no-op when `MailTs` already did it). Rejects `amp` for APIs that cannot carry it.
+ */
+export function jsonBodyOptions(options: EmailOptions, transport: string, supportsAmp = false): EmailOptions {
+  if (options.amp !== undefined && !supportsAmp) {
+    throw new MimeError(`amp is not supported by the ${transport} transport — use SMTP, SES, Mailgun, Gmail or SendGrid`);
+  }
+  return applyRichContent(options);
 }
 
 /**

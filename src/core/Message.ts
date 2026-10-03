@@ -3,6 +3,7 @@ import type { EmailOptions, Attachment } from '../types/core.js';
 import { parseAddressList, formatAddressList, extractEmails, formatAddress } from './Address.js';
 import { resolveAttachment, type AttachmentPathPolicy } from './Attachment.js';
 import { htmlToText } from './HtmlToText.js';
+import { applyRichContent } from './RichContent.js';
 import { buildICalString } from './ICal.js';
 import {
   checkContentType,
@@ -120,6 +121,7 @@ export async function buildMessage(options: EmailOptions, buildOpts: BuildOption
   }
 
   // ── Body ──────────────────────────────────────────────────────────────────
+  options = applyRichContent(options);
   const text = options.text ?? (options.html ? htmlToText(options.html) : undefined);
   const html = options.html;
   const attachments = options.attachments ?? [];
@@ -140,7 +142,9 @@ export async function buildMessage(options: EmailOptions, buildOpts: BuildOption
   // Content: text / html / alternative, wrapped in related when CIDs exist
   let content: Entity | null = null;
   if (text && html) {
-    content = { headers: [['Content-Type', 'multipart/alternative']], children: [textEntity('text/plain', text), textEntity('text/html', html)] };
+    // AMP sits between text and html: clients pick the last part they support, so html stays the fallback.
+    const amp = options.amp !== undefined ? [textEntity('text/x-amp-html', options.amp)] : [];
+    content = { headers: [['Content-Type', 'multipart/alternative']], children: [textEntity('text/plain', text), ...amp, textEntity('text/html', html)] };
   } else if (html) {
     content = textEntity('text/html', html);
   } else if (text) {
@@ -203,7 +207,7 @@ function dedupe(list: string[]): string[] {
 
 // ── Entities ────────────────────────────────────────────────────────────────
 
-function textEntity(type: 'text/plain' | 'text/html', body: string): Entity {
+function textEntity(type: 'text/plain' | 'text/html' | 'text/x-amp-html', body: string): Entity {
   return {
     headers: [
       ['Content-Type', `${type}; charset=UTF-8`],

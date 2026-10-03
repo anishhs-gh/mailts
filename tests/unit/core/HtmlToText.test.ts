@@ -133,4 +133,9 @@ describe('htmlToText', () => {
     expect(result).toContain('The Team');
     expect(result).not.toContain('<');
   });
+
+  it('drops <script> and <style> blocks outside <head> (JSON-LD, CSS)', () => {
+    const out = htmlToText('<style>p{color:red}</style><script type="application/ld+json">{"@type":"Order"}</script><p>Hello</p><SCRIPT>x()</SCRIPT >');
+    expect(out.trim()).toBe('Hello');
+  });
 });

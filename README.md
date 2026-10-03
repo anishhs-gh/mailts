@@ -19,6 +19,7 @@ Requires Node.js 22+ (SQLite queue persistence needs 22.13+). Upgrading from 0.4
 - **Bulk-sender ready** — List-Unsubscribe + one-click (RFC 8058), queue rate limits, idempotency keys
 - **DKIM signing** — rsa-sha256, relaxed/relaxed canonicalization, configurable signed headers
 - **iCal invites** — attach calendar invites (`text/calendar`) with attendees, RSVP, timezone
+- **Smart inbox content** — schema.org JSON-LD builders (orders, parcel tracking, reservations, inbox actions, Gmail Promotions), AMP for Email, Outlook Actionable Messages; OTP and BIMI guides
 - **HTML to text** — auto-generated plain-text fallback from HTML body
 - **Queue + DLQ** — priority queue, scheduled sends, exponential backoff + jitter, dead-letter queue, shutdown that never drops mail, crash-safe SQLite persistence with multi-process leases (Node 22.13+), external queue drivers (Postgres multi-instance example)
 - **Health checks** — SMTP + IMAP probe with latency measurement; ready for K8s liveness/readiness endpoints
@@ -244,6 +245,79 @@ await mail.send({ ...newsletter, unsubscribe: { url: `https://app.com/u/${token}
 // In your endpoint (providers POST "List-Unsubscribe=One-Click"):
 import { isOneClickUnsubscribe } from '@mailts/core';
 if (isOneClickUnsubscribe({ method: req.method, contentType: req.headers['content-type'], body })) { /* unsubscribe */ }
+```
+
+### Smart inbox features
+
+Mail clients can show more than the body: purchase and tracking cards, buttons in the inbox list, deal badges,
+live AMP content, approval cards, a "copy code" chip, a brand logo. Clients that don't support a feature show
+the normal html, so it is always safe to add. Full example: [`rich-inbox-email.ts`](examples/rich-inbox-email.ts).
+
+| Feature | mailts | Shown by | Sender needs |
+|---|---|---|---|
+| Calendar invite card | `ical` | Almost every client | — |
+| Unsubscribe button | `unsubscribe` | Gmail, Apple Mail, Outlook, Yahoo | — |
+| Order, parcel tracking, reservation cards; inbox buttons | `structuredData` + `schemaOrg.*` | Gmail | SPF/DKIM pass; Google sender registration for most types |
+| Promotions deal badge / image card | `schemaOrg.discountOffer` / `promotionCard` | Gmail Promotions tab | SPF/DKIM pass |
+| Live, interactive content | `amp` | Gmail, Yahoo, Mail.ru | Registration with each provider |
+| Approve / reject cards | `adaptiveCard` | Outlook, Microsoft 365 | `originator` id from Microsoft |
+| "Copy code" / code AutoFill | content only — see [OTP emails](#otp--verification-code-emails) | Gmail, Apple Mail, Outlook mobile | — |
+| Brand logo next to the sender | DNS — see [BIMI](#bimi-brand-logo) | Gmail, Apple Mail, Yahoo | DMARC enforcement (+ certificate) |
+
+**schema.org (JSON-LD).** `structuredData` takes one node or an array; it is rendered into the html `<head>`
+(escaped, kept out of the generated plain text) for SMTP and every HTTP transport.
+
+```ts
+import { schemaOrg } from '@mailts/core';
+
+await mail.send({
+  to, subject: 'Your Acme order #1234', html,
+  structuredData: [
+    schemaOrg.order({ merchant: 'Acme', orderNumber: '1234', price: 39.9, priceCurrency: 'EUR', status: 'processing',
+      items: [{ name: 'Coffee mug', quantity: 2 }] }),
+    schemaOrg.viewAction({ url: 'https://shop.example/orders/1234', name: 'View order' }),
+  ],
+});
+```
+
+Builders: `order`, `parcelDelivery`, `flightReservation`, `lodgingReservation`, `eventReservation`,
+`foodReservation`, `viewAction`, `discountOffer`, `promotionCard` — each validates its required fields and accepts
+`extra` for provider-specific properties. Any other type can be passed as a raw `{ '@type': … }` node. Check
+markup with Google's Email Markup Tester before registering.
+
+**AMP for Email.** `amp` adds a `text/x-amp-html` part between the text and html parts (html stays the fallback).
+It must be an AMP document (`<html ⚡4email>`) and needs `html`. SMTP, SES, Mailgun, the Gmail API and SendGrid
+carry it; Resend and Postmark reject it instead of dropping it silently.
+
+**Outlook Actionable Messages.** `adaptiveCard` takes an Adaptive Card (`type: 'AdaptiveCard'`) with your
+registered `originator` id and renders it into the html `<head>`.
+
+### OTP / verification code emails
+
+There is no markup for one-time codes — Gmail ("Copy code"), Apple Mail (code AutoFill on iOS/macOS) and Outlook
+mobile detect them from the content. Make detection reliable ([`otp-email.ts`](examples/otp-email.ts)):
+
+- put the code in the subject next to the word "code": `483920 is your Acme verification code`
+- one code per email, and no other long numbers nearby (order ids, phone numbers)
+- keep a plain-text part (generated from html automatically) and a short, single-purpose message
+- state the expiry; never put the code only in a link or an image
+- generate codes with `crypto.randomInt`, not `Math.random`
+
+The `@domain #code` format (WebOTP) is for SMS only and has no effect in email.
+
+### BIMI (brand logo)
+
+BIMI shows your logo next to the sender name. It is set up in DNS, not in the message:
+
+1. **Authenticate and enforce:** SPF and DKIM aligned with your From domain (`smtp.dkim` in mailts) and DMARC at
+   `p=quarantine` or `p=reject`.
+2. **Logo:** a square SVG in the SVG Tiny PS profile, served over HTTPS.
+3. **Certificate:** Gmail and Apple Mail require a Verified Mark Certificate (VMC, needs a registered trademark);
+   Gmail also accepts a Common Mark Certificate (CMC). Requirements change — check each provider.
+4. **DNS record** (TXT at `default._bimi.<your domain>`):
+
+```
+v=BIMI1; l=https://example.com/bimi/logo.svg; a=https://example.com/bimi/vmc.pem
 ```
 
 ---
@@ -1148,6 +1222,8 @@ Runnable examples live in [`examples/`](examples) (run with `npx tsx examples/<f
 | [`imap-manage.ts`](examples/imap-manage.ts) | Flags, move, delete, drafts, CONDSTORE, mailbox management |
 | [`reply-and-save-to-sent.ts`](examples/reply-and-save-to-sent.ts) | Threaded replies, save to Sent, drafts |
 | [`parse-eml.ts`](examples/parse-eml.ts) | `parseMessage()` for `.eml` / raw messages |
+| [`rich-inbox-email.ts`](examples/rich-inbox-email.ts) | Gmail order/parcel cards, inbox button, Promotions annotations, AMP, Outlook Adaptive Card |
+| [`otp-email.ts`](examples/otp-email.ts) | Verification-code email that clients detect ("Copy code", AutoFill) |
 | [`untrusted-input.ts`](examples/untrusted-input.ts) | `attachmentPolicy` and injection guards for AI agents / forms |
 | [`queue-lifecycle.ts`](examples/queue-lifecycle.ts) | Priority, pause/resume, cancel/interrupt/abort, shutdown modes, `sendAt` |
 | [`queue-persistence.ts`](examples/queue-persistence.ts) | Crash-safe SQLite queue |

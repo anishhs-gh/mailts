@@ -84,6 +84,23 @@ export interface EmailOptions {
    * enclosing part becomes `multipart/mixed`.
    */
   ical?: ICalEvent;
+  /**
+   * schema.org JSON-LD rendered into the HTML — Gmail highlights (orders, parcel tracking,
+   * reservations), inbox actions and Promotions annotations. Build with `schemaOrg.*` or pass
+   * raw nodes. Needs `html`. Gmail shows most types only for registered senders passing SPF/DKIM.
+   */
+  structuredData?: import('../core/RichContent.js').JsonLd | import('../core/RichContent.js').JsonLd[];
+  /**
+   * Outlook Actionable Message: an Adaptive Card (`type: 'AdaptiveCard'`) with the `originator`
+   * id registered with Microsoft. Rendered into the HTML `<head>`. Needs `html`.
+   */
+  adaptiveCard?: Record<string, unknown>;
+  /**
+   * AMP for Email document (`<html ⚡4email>`), sent as a `text/x-amp-html` part between the
+   * text and html parts. Needs `html` as the fallback. Gmail, Yahoo and Mail.ru render it for
+   * registered senders; everyone else shows the html part.
+   */
+  amp?: string;
 }
 
 /** Options for a template-rendered email. `html` is produced by the template engine. */

@@ -116,6 +116,8 @@ export type { ParsedMessage, MimePart, MimeLimits } from './core/MimeParser.js';
 export { signDkim } from './core/Dkim.js';
 export { htmlToText } from './core/HtmlToText.js';
 export { buildICalString } from './core/ICal.js';
+export { schemaOrg, applyRichContent } from './core/RichContent.js';
+export type { JsonLd, OrderStatus, ReservationStatus, ProductInput, PostalAddressInput } from './core/RichContent.js';
 
 // IMAP
 export { ImapClient } from './imap/ImapClient.js';

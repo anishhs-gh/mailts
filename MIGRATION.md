@@ -53,6 +53,7 @@ stored Buffer attachments as `{ type: 'Buffer', data: [...] }` are decoded back 
 - `EmailOptions.inReplyTo` / `references`, ical-only invites, `Attachment.encoding`.
 - `attachmentPolicy: 'allow' | 'deny' | { root }` (unset rejects `path` attachments).
 - `ImapPool` — reuse IMAP sessions per account in multi-tenant servers.
+- `structuredData` + `schemaOrg` builders, `amp`, `adaptiveCard` — Gmail cards/actions/Promotions, AMP for Email, Outlook Actionable Messages.
 - `enqueue(opts, { sendAt })`, `queue.get(id)`, `queue.list()`, `encodeJob` / `decodeJob`.
 - `QueueDriver.release()` / `cancel()` and `MailWorker` `prefetch` / `idleDelayMs`.
 

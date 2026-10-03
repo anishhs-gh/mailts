@@ -74,6 +74,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 - `ImapSession` lazy connect, `reconnect`, `keepAliveMs`, `isConnected`; `ImapClient.noop()`, `fetchAttributes()`.
 - `EmailOptions.inReplyTo` / `references`; `replyTo` accepts a list.
 - `attachmentPolicy: 'allow' | 'deny' | { root }` — also applied by `mail.build()`, `saveToSent()`, `session.appendMessage()` and `ImapPool`.
+- **Smart inbox content**: `EmailOptions.structuredData` (schema.org JSON-LD rendered into the html `<head>`, escaped, excluded from generated text) with typed `schemaOrg` builders — `order`, `parcelDelivery`, `flightReservation`, `lodgingReservation`, `eventReservation`, `foodReservation`, `viewAction`, `discountOffer`, `promotionCard`; `EmailOptions.amp` (`text/x-amp-html` part between text and html, validated; carried by SMTP/SES/Mailgun/Gmail/SendGrid, rejected by Resend/Postmark); `EmailOptions.adaptiveCard` (Outlook Actionable Messages, `originator` required). README guides for OTP emails and BIMI.
 - **`ImapPool`** — per-account IMAP session pool for multi-tenant servers: exclusive `use(key, config, fn)`, `maxPerAccount` / `maxSessions` with LRU eviction of idle sessions, idle timeout, acquire timeout (`ETIMEOUT`), lazy/async config, sessions with failed logins discarded, `close(key)` / `closeAll()`.
 - Queue: `enqueue(opts, { sendAt, id })`, `scheduled` state and stat, `get()`, `list()`, `maxRetryDelay`, `ShutdownResult`; `QueueDriver.release()` / `cancel()`; `MailWorker` `prefetch`, `idleDelayMs`, `use()`.
 - `SmtpClient.send()` returning accepted/rejected; `SMTPUTF8` and `BODY=8BITMIME` when required.
@@ -81,6 +82,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 ### Changed
 
+- `htmlToText` (auto plain text) drops `<script>` and `<style>` blocks anywhere in the html.
 - **Breaking:** `path` attachments are rejected when `attachmentPolicy` is unset (was: read, with a warning). Pass `content`, or set `{ root }` / `'allow'`.
 - Node.js **22+** required (build target `node22`); Node 18 and 20 are end-of-life. `queue.persist` needs 22.13+.
 - CI runs Node 22/24 and an integration suite against GreenMail (`npm run test:integration`).
@@ -88,7 +90,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 ### Examples
 
-- New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `imap-pool.ts`, `queue-driver-postgres.ts` (multi-instance queue on Postgres: `SKIP LOCKED`, leases, idempotency keys), `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
+- New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `imap-pool.ts`, `rich-inbox-email.ts`, `otp-email.ts`, `queue-driver-postgres.ts` (multi-instance queue on Postgres: `SKIP LOCKED`, leases, idempotency keys), `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
 - Updated for 0.5: `attachments-and-inline.ts` (`attachmentPolicy`), `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
 
 ## [0.4.0] — 2026-06-22

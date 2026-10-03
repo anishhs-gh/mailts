@@ -14,8 +14,9 @@ export function htmlToText(html: string): string {
   // Normalise line endings
   text = text.replace(/\r\n|\r/g, '\n');
 
-  // Drop <head> block entirely
+  // Drop <head>, <script> and <style> blocks entirely (JSON-LD, Adaptive Cards, CSS)
   text = text.replace(/<head[\s\S]*?<\/head>/gi, '');
+  text = text.replace(/<(script|style)\b[\s\S]*?<\/\1\s*>/gi, '');
 
   // <br> → newline
   text = text.replace(/<br\s*\/?>/gi, '\n');
