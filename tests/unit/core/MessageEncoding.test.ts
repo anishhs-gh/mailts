@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, symlinkSync } from 'fs';
+import { mkdtempSync, writeFileSync, symlinkSync, realpathSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { buildMessage } from '../../../src/core/Message.js';
@@ -119,5 +119,24 @@ describe('attachmentPolicy', () => {
       await expect(buildMessage({ ...base, text: 'x', attachments: [{ filename: 'a', path }] }, { attachmentPolicy: policy }))
         .rejects.toThrow(/escapes|not found/);
     }
+  });
+
+  it('{ root } reached through a symlinked prefix allows files inside (regression: /var → /private/var, /app → /srv/app)', async () => {
+    const real = realpathSync(mkdtempSync(join(tmpdir(), 'mailts-real-')));
+    writeFileSync(join(real, 'f.txt'), 'via link');
+    const linkDir = join(mkdtempSync(join(tmpdir(), 'mailts-lnk-')), 'app');
+    symlinkSync(real, linkDir);
+    const send = (root: string, path: string) =>
+      buildMessage({ ...base, text: 'x', attachments: [{ filename: 'f', path }] }, { attachmentPolicy: { root } });
+    for (const [root, path] of [[linkDir, join(linkDir, 'f.txt')], [real, join(linkDir, 'f.txt')], [linkDir, join(real, 'f.txt')], [linkDir, 'f.txt']]) {
+      const built = await send(root!, path!);
+      expect(parseMessage(built.raw).attachments[0]!.content!.toString(), `${root} + ${path}`).toBe('via link');
+    }
+    // Still closed: outside files via the link root, missing files, and a symlink inside pointing out
+    await expect(send(linkDir, join(outsideDir, 'secret.txt'))).rejects.toThrow(/escapes/);
+    await expect(send(linkDir, join(linkDir, 'missing.txt'))).rejects.toThrow(/not found/);
+    await expect(send(linkDir, join(outsideDir, 'missing.txt'))).rejects.toThrow(/escapes/);
+    symlinkSync(join(outsideDir, 'secret.txt'), join(real, 'out.txt'));
+    await expect(send(linkDir, join(linkDir, 'out.txt'))).rejects.toThrow(/escapes/);
   });
 });

@@ -90,7 +90,7 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 
 ### Examples
 
-- New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `imap-pool.ts`, `rich-inbox-email.ts`, `otp-email.ts`, `queue-driver-postgres.ts` (multi-instance queue on Postgres: `SKIP LOCKED`, leases, idempotency keys), `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
+- New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `imap-pool.ts`, `rich-inbox-email.ts`, `otp-email.ts`, `queue-driver-postgres.ts` (multi-instance queue on Postgres: `SKIP LOCKED`, leases, `maxAttempts` cap, idempotency keys; integration-tested on PGlite), `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
 - Updated for 0.5: `attachments-and-inline.ts` (`attachmentPolicy`), `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
 
 ## [0.4.0] — 2026-06-22

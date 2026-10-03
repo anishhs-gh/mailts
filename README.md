@@ -864,8 +864,9 @@ file paths — streams cannot be persisted. The same `encodeJob` / `decodeJob` c
 
 SQLite leases only coordinate processes on **one disk**. For several instances (Cloud Run, Kubernetes), keep jobs
 in a shared database and run a `MailWorker` per instance — see
-[`queue-driver-postgres.ts`](examples/queue-driver-postgres.ts) (`FOR UPDATE SKIP LOCKED`, leases, cross-instance
-idempotency keys; any Postgres incl. Cloud SQL).
+[`queue-driver-postgres.ts`](examples/queue-driver-postgres.ts) (`FOR UPDATE SKIP LOCKED`, leases, a retry cap for jobs
+that keep crashing their worker, cross-instance idempotency keys; any Postgres incl. Cloud SQL). It is tested against a real
+Postgres engine in the integration suite.
 
 ### Queue events
 

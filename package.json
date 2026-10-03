@@ -1,7 +1,7 @@
 {
   "name": "@mailts/core",
   "version": "0.5.0",
-  "description": "Modern native TypeScript SMTP/IMAP library \u2014 zero legacy deps, built to replace nodemailer",
+  "description": "Modern native TypeScript SMTP/IMAP library — zero legacy deps, built to replace nodemailer",
   "license": "MIT",
   "author": {
     "name": "Anish Shekh",
@@ -83,6 +83,7 @@
     "example:oauth-web": "node --env-file=examples/.env node_modules/vite-node/vite-node.mjs examples/oauth-web-server.ts"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.16",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^3.0.0",
     "tsup": "^8.0.0",

@@ -11,6 +11,7 @@
  * Delivery is at-least-once: if an instance dies after the SMTP server accepted a message but
  * before `ack`, the lease expires and another instance sends it again. Keep `leaseSeconds`
  * above your worst-case send time including retries (see `queue.maxRetries` / backoff).
+ * A job whose lease expires `maxAttempts` times (it keeps crashing its worker) is marked dead.
  *
  * Works with Cloud SQL / AlloyDB / any Postgres 9.5+. Requires: npm install pg
  *
@@ -18,7 +19,6 @@
  *   DATABASE_URL=postgres://… SMTP_HOST=… SMTP_USER=… SMTP_PASS=… npx tsx examples/queue-driver-postgres.ts
  */
 import { pathToFileURL } from 'url';
-import pg from 'pg';
 import { MailWorker, encodeOptions, decodeOptions } from '@mailts/core';
 import type { QueueDriver, DriverMessage, EmailOptions } from '@mailts/core';
 
@@ -67,10 +67,30 @@ export async function enqueue(
   return rows[0] ? String(rows[0].id) : null;
 }
 
+export interface PostgresDriverOptions {
+  /** Lease per claim; must exceed the worst-case send time including retries. Default 300. */
+  leaseSeconds?: number;
+  /** Claims before a job whose lease keeps expiring is marked dead. Default 5. */
+  maxAttempts?: number;
+}
+
 export class PostgresDriver implements QueueDriver {
-  constructor(private readonly db: Db, private readonly leaseSeconds = 300) {}
+  private readonly leaseSeconds: number;
+  private readonly maxAttempts: number;
+
+  constructor(private readonly db: Db, opts: PostgresDriverOptions = {}) {
+    this.leaseSeconds = opts.leaseSeconds ?? 300;
+    this.maxAttempts = opts.maxAttempts ?? 5;
+  }
 
   async dequeue(): Promise<DriverMessage | null> {
+    // Jobs that crashed their worker maxAttempts times stop here instead of retrying forever.
+    await this.db.query(
+      `UPDATE mail_jobs SET status = 'dead', locked_until = NULL, updated_at = now(),
+              last_error = 'lease expired ' || attempts || ' times (worker crashed or timed out)'
+        WHERE status = 'sending' AND locked_until < now() AND attempts >= $1`,
+      [this.maxAttempts],
+    );
     // One statement: claim the best ready job (or one whose lease expired) and lease it.
     const { rows } = await this.db.query<{ id: string; payload: string; priority: number; idempotency_key: string | null }>(
       `UPDATE mail_jobs
@@ -78,12 +98,12 @@ export class PostgresDriver implements QueueDriver {
               locked_until = now() + make_interval(secs => $1)
         WHERE id = (
           SELECT id FROM mail_jobs
-           WHERE status = 'pending' OR (status = 'sending' AND locked_until < now())
+           WHERE status = 'pending' OR (status = 'sending' AND locked_until < now() AND attempts < $2)
            ORDER BY priority, id
            FOR UPDATE SKIP LOCKED
            LIMIT 1)
        RETURNING id, payload, priority, idempotency_key`,
-      [this.leaseSeconds],
+      [this.leaseSeconds, this.maxAttempts],
     );
     const row = rows[0];
     if (!row) return null;
@@ -128,6 +148,7 @@ export class PostgresDriver implements QueueDriver {
 // ── Run ──────────────────────────────────────────────────────────────────────
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const { default: pg } = await import('pg');
   const db = new pg.Pool({ connectionString: process.env['DATABASE_URL'], max: 5 });
   await createSchema(db);
 

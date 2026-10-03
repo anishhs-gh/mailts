@@ -116,20 +116,25 @@ async function checkPath(path: string, policy: AttachmentPathPolicy | undefined)
   }
   if (policy === 'deny') throw new MimeError('Attachment paths are disabled by attachmentPolicy');
   if (policy === 'allow') return resolve(process.cwd(), path);
-  const root = await realpath(resolve(policy.root)).catch(() => {
+  const given = resolve(policy.root);
+  const root = await realpath(given).catch(() => {
     throw new MimeError(`attachmentPolicy root does not exist: ${policy.root}`);
   });
+  const escapes = () => new MimeError(`Attachment path escapes the allowed root: ${basename(path)}`);
+  // Relative paths are relative to the root; absolute ones may reach it through a symlinked
+  // prefix (macOS /var → /private/var, /app → /srv/app), so the gate is the resolved path.
   const lexical = resolve(root, path);
-  if (lexical !== root && !lexical.startsWith(root + sep)) {
-    throw new MimeError(`Attachment path escapes the allowed root: ${basename(path)}`);
-  }
   const real = await realpath(lexical).catch(() => {
-    throw new MimeError(`Attachment not found: ${basename(path)}`);
+    // Don't reveal whether files outside the root exist.
+    if (isWithin(lexical, root) || isWithin(lexical, given)) throw new MimeError(`Attachment not found: ${basename(path)}`);
+    throw escapes();
   });
-  if (real !== root && !real.startsWith(root + sep)) {
-    throw new MimeError(`Attachment path escapes the allowed root: ${basename(path)}`);
-  }
+  if (!isWithin(real, root)) throw escapes();
   return real;
+}
+
+function isWithin(path: string, root: string): boolean {
+  return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
 /**
