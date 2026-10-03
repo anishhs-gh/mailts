@@ -73,21 +73,23 @@ Correctness and security release plus OAuth. See [MIGRATION.md](MIGRATION.md) fo
 - `session.watch()` / `MailboxWatcher` — new mail by UID on a dedicated connection with reconnect and catch-up.
 - `ImapSession` lazy connect, `reconnect`, `keepAliveMs`, `isConnected`; `ImapClient.noop()`, `fetchAttributes()`.
 - `EmailOptions.inReplyTo` / `references`; `replyTo` accepts a list.
-- `attachmentPolicy: 'allow' | 'deny' | { root }`. Leaving it unset behaves as `'allow'` but emits a one-time `MailtsWarning` (`MAILTS_ATTACHMENT_PATH_POLICY`) when a path is read — the default will become `'deny'`.
+- `attachmentPolicy: 'allow' | 'deny' | { root }` — also applied by `mail.build()`, `saveToSent()`, `session.appendMessage()` and `ImapPool`.
+- **`ImapPool`** — per-account IMAP session pool for multi-tenant servers: exclusive `use(key, config, fn)`, `maxPerAccount` / `maxSessions` with LRU eviction of idle sessions, idle timeout, acquire timeout (`ETIMEOUT`), lazy/async config, sessions with failed logins discarded, `close(key)` / `closeAll()`.
 - Queue: `enqueue(opts, { sendAt, id })`, `scheduled` state and stat, `get()`, `list()`, `maxRetryDelay`, `ShutdownResult`; `QueueDriver.release()` / `cancel()`; `MailWorker` `prefetch`, `idleDelayMs`, `use()`.
 - `SmtpClient.send()` returning accepted/rejected; `SMTPUTF8` and `BODY=8BITMIME` when required.
 - Errors: `ImapAuthError`, `ImapConnError`, `OAuthError`; `ImapError.responseCode`.
 
 ### Changed
 
+- **Breaking:** `path` attachments are rejected when `attachmentPolicy` is unset (was: read, with a warning). Pass `content`, or set `{ root }` / `'allow'`.
 - Node.js **22+** required (build target `node22`); Node 18 and 20 are end-of-life. `queue.persist` needs 22.13+.
 - CI runs Node 22/24 and an integration suite against GreenMail (`npm run test:integration`).
 - `npm run typecheck` now also typechecks `examples/`.
 
 ### Examples
 
-- New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
-- Updated for 0.5: `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
+- New: `oauth-app-only.ts`, `mailbox-any-provider.ts`, `newsletter-unsubscribe.ts`, `oauth-cli.ts` (sign in / send / sign out, Google + Microsoft), `oauth-web-server.ts` (connect-your-mailbox web flow), `reply-and-save-to-sent.ts`, `parse-eml.ts`, `untrusted-input.ts`, `queue-persistence.ts`, `imap-pool.ts`, `queue-driver-postgres.ts` (multi-instance queue on Postgres: `SKIP LOCKED`, leases, idempotency keys), `oauth-test.mjs` (interactive live smoke test against the built package, IMAP/SMTP or Gmail API).
+- Updated for 0.5: `attachments-and-inline.ts` (`attachmentPolicy`), `xoauth2.ts` (token provider), `imap-read.ts` (`watch()`), `imap-manage.ts` (`appendMessage`, `findMailbox`), `queue-lifecycle.ts` (shutdown modes, `sendAt`), `mail-worker-redis.ts` (correct inflight removal, `release`, `JobCodec`).
 
 ## [0.4.0] — 2026-06-22
 

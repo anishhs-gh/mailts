@@ -4,6 +4,7 @@ import { MailboxWatcher, type WatchOptions } from './MailboxWatcher.js';
 import type { BodyLeaf, BodyMultipart, BodyNode } from './ImapBodyStructure.js';
 import { decodeTransfer, decodeText } from '../core/MimeParser.js';
 import { buildMessage } from '../core/Message.js';
+import type { AttachmentPathPolicy } from '../core/Attachment.js';
 import type { Logger } from '../logger/Logger.js';
 import type { EmailOptions } from '../types/core.js';
 import type {
@@ -69,7 +70,12 @@ export class ImapSession extends EventEmitter {
   /** Session-level lock: SELECT + the following commands run atomically. */
   private sessionLock: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly config: ImapConfig, private readonly logger?: Logger) {
+  constructor(
+    private readonly config: ImapConfig,
+    private readonly logger?: Logger,
+    /** `attachmentPolicy` for `appendMessage()` with `path` attachments (unset rejects them). */
+    private readonly options: { attachmentPolicy?: AttachmentPathPolicy } = {},
+  ) {
     super();
     this.on('error', () => {});
   }
@@ -476,7 +482,7 @@ export class ImapSession extends EventEmitter {
     if (Buffer.isBuffer(message) || typeof message === 'string') {
       return this.append(mailbox, message, flags, internalDate);
     }
-    const built = await buildMessage(message);
+    const built = await buildMessage(message, { attachmentPolicy: this.options.attachmentPolicy });
     const res = await this.append(mailbox, built.raw, flags, internalDate ?? message.date);
     return { ...res, messageId: built.messageId };
   }

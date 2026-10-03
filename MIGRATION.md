@@ -26,7 +26,7 @@ behaviour changes to check. Tracking issue: [#17](https://github.com/anishhs-gh/
 | Non-network errors in the queue | Retried as `ECONN` | Not retried (`EQUEUE`, `retryable: false`) | — |
 | Custom headers | CR/LF stripped silently | Invalid header names / content types throw `MimeError` | Fix the input |
 | Addresses | Malformed addresses reached the transport | From/To/Cc/Bcc/Reply-To must look like `local@domain` (no spaces, brackets, quotes) — otherwise `send()` returns a `MimeError` | Validate or clean addresses before sending |
-| `path` attachments with no `attachmentPolicy` | Read silently | Still read, plus a one-time `MailtsWarning` on stderr | Set `attachmentPolicy` explicitly (`'allow'` keeps today's behaviour) |
+| `path` attachments with no `attachmentPolicy` | Read silently | **Rejected** (`MimeError`; `send()` returns `ok: false`) | Pass `content`, or set `attachmentPolicy`: `{ root }` for one folder, `'allow'` for trusted code (0.4 behaviour) |
 | `QueueStats` | — | New `scheduled` field; `QueueJob.status` may be `'scheduled'` | Update exhaustive switches |
 | HTTP transport failures | Plain `Error`, never retried | `TransportError` with `status`, `provider`, `retryAfterMs`; 429/5xx retried by the queue | Catch `TransportError` instead of matching message text |
 | `enqueue(…, { id })` on `SqliteQueue` | Reusing an id re-sent the job | Throws `QueueError` for any id already in the database | Use `idempotencyKey` for "at most once per key" |
@@ -51,7 +51,8 @@ stored Buffer attachments as `{ type: 'Buffer', data: [...] }` are decoded back 
 - `session.watch(mailbox)` — new-mail events by UID with automatic reconnect.
 - `session.findMailbox('\\Sent')`, `fetch({ headers: ['References'] })`, `envelope.references`.
 - `EmailOptions.inReplyTo` / `references`, ical-only invites, `Attachment.encoding`.
-- `attachmentPolicy: 'deny' | { root }` for untrusted input.
+- `attachmentPolicy: 'allow' | 'deny' | { root }` (unset rejects `path` attachments).
+- `ImapPool` — reuse IMAP sessions per account in multi-tenant servers.
 - `enqueue(opts, { sendAt })`, `queue.get(id)`, `queue.list()`, `encodeJob` / `decodeJob`.
 - `QueueDriver.release()` / `cancel()` and `MailWorker` `prefetch` / `idleDelayMs`.
 

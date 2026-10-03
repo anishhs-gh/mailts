@@ -57,10 +57,9 @@ export interface MailTsConfig {
   /** Telemetry hooks for observability — wired to send and queue events. */
   telemetry?: TelemetryHooks;
   /**
-   * Policy for attachments given by filesystem `path`. Use `'deny'` (or
-   * `{ root }`) when messages are built from untrusted input such as AI agents.
-   * Unset behaves as `'allow'` and warns once when a path is read; the default
-   * will become `'deny'` in a future release.
+   * Policy for attachments given by filesystem `path`. Unset rejects them (same as
+   * `'deny'`). Use `{ root }` to allow one directory, or `'allow'` only when every
+   * message comes from trusted code — never for untrusted input such as AI agents.
    */
   attachmentPolicy?: AttachmentPathPolicy;
 }
@@ -407,7 +406,7 @@ export class MailTs {
 
   private sentImap(): ImapSession {
     if (!this.imapConfig) throw new ConfigError('IMAP not configured — saveToSent needs imap config');
-    return (this.sentSession ??= new ImapSession(this.imapConfig, this.logger));
+    return (this.sentSession ??= new ImapSession(this.imapConfig, this.logger, { attachmentPolicy: this.attachmentPolicy }));
   }
 
   private devResult(options: EmailOptions): SendResult {
@@ -628,7 +627,7 @@ export class MailTs {
     if (!this.imapConfig) {
       throw new ConfigError('IMAP not configured. Pass imap config to configure() or constructor.');
     }
-    return new ImapSession(this.imapConfig, this.logger);
+    return new ImapSession(this.imapConfig, this.logger, { attachmentPolicy: this.attachmentPolicy });
   }
 
   // ─── Health ───────────────────────────────────────────────────────────────

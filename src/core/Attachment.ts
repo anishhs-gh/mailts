@@ -100,27 +100,22 @@ function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 /**
  * Controls reading attachments from the local filesystem via `path`.
- * - `'allow'` (default): any readable path, relative to `process.cwd()`
- * - `'deny'`: `path` attachments are rejected — recommended for servers that
- *   build messages from untrusted input (e.g. AI agents)
+ * - `'deny'` (default when unset): `path` attachments are rejected — pass `content` instead
+ * - `'allow'`: any readable path, relative to `process.cwd()` — only for trusted callers
+ *   (CLIs, scripts); never for messages built from untrusted input (e.g. AI agents)
  * - `{ root }`: only files inside `root` (symlinks resolved) are allowed
  */
 export type AttachmentPathPolicy = 'allow' | 'deny' | { root: string };
 
-let warnedDefaultPolicy = false;
-
 async function checkPath(path: string, policy: AttachmentPathPolicy | undefined): Promise<string> {
-  if (policy === 'deny') throw new MimeError('Attachment paths are disabled by attachmentPolicy');
-  if (policy === undefined && !warnedDefaultPolicy) {
-    warnedDefaultPolicy = true;
-    // Written to stderr by Node's default handler — never stdout.
-    process.emitWarning(
-      'Attachment `path` was read with the default attachmentPolicy (\'allow\'). The default becomes \'deny\' ' +
-      'in a future release — set attachmentPolicy explicitly (\'allow\', \'deny\' or { root }).',
-      { type: 'MailtsWarning', code: 'MAILTS_ATTACHMENT_PATH_POLICY' },
+  if (policy === undefined) {
+    throw new MimeError(
+      'Attachment `path` is disabled by default — pass `content`, or set attachmentPolicy ' +
+      '(\'allow\' for trusted callers, or { root }) to read files',
     );
   }
-  if (policy === undefined || policy === 'allow') return resolve(process.cwd(), path);
+  if (policy === 'deny') throw new MimeError('Attachment paths are disabled by attachmentPolicy');
+  if (policy === 'allow') return resolve(process.cwd(), path);
   const root = await realpath(resolve(policy.root)).catch(() => {
     throw new MimeError(`attachmentPolicy root does not exist: ${policy.root}`);
   });
@@ -138,8 +133,7 @@ async function checkPath(path: string, policy: AttachmentPathPolicy | undefined)
 }
 
 /**
- * @param policy - Path policy; `undefined` means "not configured" (behaves as
- *   `'allow'` and emits a one-time deprecation warning when a path is used).
+ * @param policy - Path policy; `undefined` rejects `path` attachments (same as `'deny'`).
  */
 export async function resolveAttachment(
   att: Attachment,

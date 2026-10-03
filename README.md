@@ -11,7 +11,7 @@ Requires Node.js 22+ (SQLite queue persistence needs 22.13+). Upgrading from 0.4
 ## Features
 
 - **Native SMTP** — STARTTLS (required before AUTH by default), AUTH PLAIN / LOGIN / XOAUTH2, PIPELINING, SMTPUTF8, partial-recipient reporting, connection pool
-- **Native IMAP** — byte-exact protocol parser, automatic mailbox selection and reconnection, full MIME parsing (multipart, inline attachments, forwarded messages, RFC 2231/2047, charset-aware), BODYSTRUCTURE selective fetch, search (incl. non-ASCII), MOVE/COPY/APPEND, CONDSTORE, `watch()` push by UID, special-use mailboxes, internationalised mailbox names
+- **Native IMAP** — byte-exact protocol parser, automatic mailbox selection and reconnection, full MIME parsing (multipart, inline attachments, forwarded messages, RFC 2231/2047, charset-aware), BODYSTRUCTURE selective fetch, search (incl. non-ASCII), MOVE/COPY/APPEND, CONDSTORE, `watch()` push by UID, special-use mailboxes, internationalised mailbox names, per-account connection pool (`ImapPool`) for multi-tenant servers
 - **OAuth 2.0** — Gmail / Google Workspace and Microsoft 365 / Outlook.com: browser sign-in (PKCE, loopback for CLIs), token refresh with rotation, `getToken` hook — `@mailts/core/oauth`
 - **HTTP transports** — Resend, SendGrid, Mailgun, Postmark, Amazon SES, **Microsoft Graph**, **Gmail API** (all zero-dep), with retryable rate-limit/outage errors
 - **One mailbox API for IMAP, Microsoft Graph and the Gmail API** — read, search, flag, move, draft and watch with the same code
@@ -20,14 +20,14 @@ Requires Node.js 22+ (SQLite queue persistence needs 22.13+). Upgrading from 0.4
 - **DKIM signing** — rsa-sha256, relaxed/relaxed canonicalization, configurable signed headers
 - **iCal invites** — attach calendar invites (`text/calendar`) with attendees, RSVP, timezone
 - **HTML to text** — auto-generated plain-text fallback from HTML body
-- **Queue + DLQ** — priority queue, scheduled sends, exponential backoff + jitter, dead-letter queue, shutdown that never drops mail, crash-safe SQLite persistence with multi-process leases (Node 22+), external queue drivers
+- **Queue + DLQ** — priority queue, scheduled sends, exponential backoff + jitter, dead-letter queue, shutdown that never drops mail, crash-safe SQLite persistence with multi-process leases (Node 22.13+), external queue drivers (Postgres multi-instance example)
 - **Health checks** — SMTP + IMAP probe with latency measurement; ready for K8s liveness/readiness endpoints
 - **Telemetry hooks** — zero-dependency observability; inject metrics/alerting callbacks for send, error, and queue events
 - **Streaming logs** — structured `LogEvent` stream, pluggable log sinks, full protocol trace (credentials auto-redacted)
 - **Aliases & templates** — define reusable email configs, plug in any template engine
 - **Middleware** — transform every outbound message in a pipeline
 - **Config file** — auto-loaded from `.mailtsrc` / `~/.mailts/config.json`, `${ENV_VAR}` expansion
-- **Security** — sealed `Credential` value object, encoded/validated headers (no injection via subjects, names, filenames or content types), IMAP/SMTP command-injection guards, `requireTLS`, `attachmentPolicy` for untrusted input, prototype-pollution-safe config parser
+- **Security** — sealed `Credential` value object, encoded/validated headers (no injection via subjects, names, filenames or content types), IMAP/SMTP command-injection guards, `requireTLS`, local file attachments off by default (`attachmentPolicy`), prototype-pollution-safe config parser
 - **Zero runtime deps** — only `node:net`, `node:tls`, `node:crypto`, `node:stream`, `node:http`, `node:https`
 
 ---
@@ -128,7 +128,7 @@ await mail.send({
   text: 'Plain text fallback',
   html: '<p>HTML body</p>',
   attachments: [
-    { filename: 'report.pdf', path: './report.pdf' },
+    { filename: 'report.pdf', path: './report.pdf' },  // needs attachmentPolicy — see Security
     { filename: 'inline.png', content: buffer, cid: 'logo@mailts' },
   ],
   headers: { 'X-Priority': '1' },
@@ -644,6 +644,33 @@ await watcher.stop();
 
 The older `session.idle(cb)` / `stopIdle()` still work and now deliver `{ uid }`.
 
+### Connection pool (multi-tenant servers)
+
+Servers that act on many mailboxes (APIs, MCP servers) should not log in per request. `ImapPool` keeps
+authenticated sessions per account and lends each one to a single callback at a time:
+
+```ts
+import { ImapPool } from '@mailts/core';
+
+const pool = new ImapPool({ maxPerAccount: 2, maxSessions: 200, idleTimeoutMs: 5 * 60_000 });
+
+const unread = await pool.use(account.id, () => imapConfigFor(account), (session) =>
+  session.fetch({ seen: false, limit: 20 }));
+
+await pool.close(account.id); // sign-out / credentials changed — next use() logs in again
+await pool.closeAll();        // shutdown
+```
+
+| Option | Default | |
+|---|---|---|
+| `maxPerAccount` | `1` | Parallel sessions per account (providers cap connections per mailbox) |
+| `maxSessions` | `100` | Total; when full, the least recently used idle session is closed |
+| `idleTimeoutMs` | 5 min | Log out unused sessions (`0` keeps them) |
+| `acquireTimeoutMs` | 30 s | Waiting longer rejects with a retryable `ETIMEOUT` `ImapError` |
+
+The config is only resolved when a session is opened, so it can be async (token lookup). A session whose
+login failed is discarded. Watchers open their own connection — run them outside the pool.
+
 ---
 
 ## One mailbox API: IMAP, Microsoft Graph, Gmail API
@@ -761,6 +788,11 @@ processes can share one database file safely (each claims jobs with a lease). At
 file paths — streams cannot be persisted. The same `encodeJob` / `decodeJob` codec is exported for
 `QueueDriver` implementations.
 
+SQLite leases only coordinate processes on **one disk**. For several instances (Cloud Run, Kubernetes), keep jobs
+in a shared database and run a `MailWorker` per instance — see
+[`queue-driver-postgres.ts`](examples/queue-driver-postgres.ts) (`FOR UPDATE SKIP LOCKED`, leases, cross-instance
+idempotency keys; any Postgres incl. Cloud SQL).
+
 ### Queue events
 
 ```ts
@@ -829,7 +861,8 @@ await worker.shutdown(5_000); // graceful drain, abort stragglers after 5 s
 |---|---|---|
 | `success` | `driver.ack(id)` | Remove from external queue |
 | `dead` | `driver.nack(id, lastError)` | Move to external DLQ or delete |
-| `cancelled` | — | Job never reached the transport; stays in external queue |
+| `cancelled` | `driver.cancel(id)` (falls back to `ack`) | Cancelled by the app; removed without sending |
+| shutdown | `driver.release(id)` (optional) | Received but not started; hand back to other consumers now |
 
 ### QueueDriver interface
 
@@ -838,16 +871,20 @@ interface QueueDriver<T = EmailOptions> {
   dequeue(): Promise<DriverMessage<T> | null>;  // return null when idle (long-poll inside)
   ack(id: string): Promise<void>;
   nack(id: string, reason?: Error): Promise<void>;
+  release?(id: string): Promise<void>;          // optional: unstarted message at shutdown
+  cancel?(id: string): Promise<void>;           // optional: defaults to ack
 }
 
 interface DriverMessage<T = EmailOptions> {
   id: string;            // external message ID used for ack/nack
   data: T;               // EmailOptions payload
   priority?: JobPriority;
+  idempotencyKey?: string;
 }
 ```
 
-See `examples/mail-worker-redis.ts` for a complete working Redis example.
+Complete drivers: [`mail-worker-redis.ts`](examples/mail-worker-redis.ts) (Redis) and
+[`queue-driver-postgres.ts`](examples/queue-driver-postgres.ts) (Postgres, many instances).
 
 ---
 
@@ -972,18 +1009,22 @@ const mail = new MailTs({
 
 ## Security for untrusted input
 
-When messages are built from untrusted input (AI agents, web forms), lock down local file access and keep TLS mandatory:
+Attachments given by local `path` are **rejected unless you set `attachmentPolicy`**, so a message built from
+untrusted input (AI agents, web forms) cannot attach `/etc/passwd` or `.env`. Pass `content` (Buffer/string) instead,
+or opt in:
 
 ```ts
 const mail = new MailTs({
   smtp,
-  attachmentPolicy: 'deny',          // or { root: '/srv/uploads' } — symlinks resolved, escapes rejected
+  attachmentPolicy: { root: '/srv/uploads' },  // only files inside root — symlinks resolved, escapes rejected
+  // attachmentPolicy: 'allow',                 // any path — trusted code only (scripts, CLIs)
 });
-// Unset attachmentPolicy behaves as 'allow' and warns once when a path is read;
-// the default will become 'deny' in a future release.
 // requireTLS defaults to true when authenticating (loopback hosts exempt); SMTP and IMAP
 // refuse to send credentials if STARTTLS is missing.
 ```
+
+The same policy applies to `mail.build()`, `saveToSent()`, `session.appendMessage()` and `ImapPool`. mailts never
+fetches URLs, so attachment SSRF is not possible through it.
 
 Header values, filenames, content types, IMAP flags, sequence sets and all addresses (From/To/Cc/Bcc/Reply-To)
 are encoded or validated — malformed input is rejected with `MimeError` instead of being written to the wire.
@@ -1103,6 +1144,7 @@ Runnable examples live in [`examples/`](examples) (run with `npx tsx examples/<f
 | [`mailbox-any-provider.ts`](examples/mailbox-any-provider.ts) | One `Mailbox` code path for IMAP, Microsoft Graph and the Gmail API |
 | [`newsletter-unsubscribe.ts`](examples/newsletter-unsubscribe.ts) | One-click unsubscribe, rate limits and idempotency for bulk sends |
 | [`imap-read.ts`](examples/imap-read.ts) | Unread mail, full bodies, `watch()` for new mail |
+| [`imap-pool.ts`](examples/imap-pool.ts) | Per-account IMAP connection pool for multi-tenant servers |
 | [`imap-manage.ts`](examples/imap-manage.ts) | Flags, move, delete, drafts, CONDSTORE, mailbox management |
 | [`reply-and-save-to-sent.ts`](examples/reply-and-save-to-sent.ts) | Threaded replies, save to Sent, drafts |
 | [`parse-eml.ts`](examples/parse-eml.ts) | `parseMessage()` for `.eml` / raw messages |
@@ -1111,6 +1153,7 @@ Runnable examples live in [`examples/`](examples) (run with `npx tsx examples/<f
 | [`queue-persistence.ts`](examples/queue-persistence.ts) | Crash-safe SQLite queue |
 | [`queue-and-dlq.ts`](examples/queue-and-dlq.ts) | Retries, dead-letter queue, telemetry |
 | [`mail-worker-redis.ts`](examples/mail-worker-redis.ts) | External queue driver (Redis) with `MailWorker` |
+| [`queue-driver-postgres.ts`](examples/queue-driver-postgres.ts) | Durable queue shared by many instances (Cloud Run, Kubernetes) on Postgres |
 | [`attachments-and-inline.ts`](examples/attachments-and-inline.ts) · [`ical-invite.ts`](examples/ical-invite.ts) · [`cc-bcc-replyto.ts`](examples/cc-bcc-replyto.ts) | Message building |
 | [`transports.ts`](examples/transports.ts) · [`dkim-and-proxy.ts`](examples/dkim-and-proxy.ts) · [`smtp-pool-config.ts`](examples/smtp-pool-config.ts) | Delivery options |
 | [`middleware-and-devmode.ts`](examples/middleware-and-devmode.ts) · [`aliases-and-templates.ts`](examples/aliases-and-templates.ts) · [`streaming-logs.ts`](examples/streaming-logs.ts) · [`health-checks.ts`](examples/health-checks.ts) | App integration |

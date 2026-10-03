@@ -32,10 +32,7 @@ export interface BuiltMessage {
 }
 
 export interface BuildOptions {
-  /**
-   * Policy for `path` attachments. Unset behaves as `'allow'` and emits a
-   * one-time warning when a path is used (the default will become `'deny'`).
-   */
+  /** Policy for `path` attachments. Unset rejects them (same as `'deny'`). */
   attachmentPolicy?: AttachmentPathPolicy;
 }
 

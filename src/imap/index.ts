@@ -1,5 +1,7 @@
 export { ImapClient } from './ImapClient.js';
 export { ImapSession } from './ImapSession.js';
+export { ImapPool } from './ImapPool.js';
+export type { ImapPoolOptions, ImapPoolStats, ImapConfigSource } from './ImapPool.js';
 export { ImapParser } from './ImapParser.js';
 export { ImapCmd, buildSearchCommand } from './ImapCommands.js';
 export { parseFetchResponse, parseSectionResponse } from './ImapFetch.js';

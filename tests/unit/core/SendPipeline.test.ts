@@ -29,22 +29,21 @@ describe('address validation in buildMessage', () => {
 });
 
 describe('attachment path policy', () => {
-  it('warns once when a path is read without an explicit policy', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mailts-warn-'));
-    writeFileSync(join(dir, 'f.txt'), 'x');
-    const warn = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
-    const { transport } = capture();
+  it('rejects path attachments when no policy is set, without reading the file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mailts-deny-'));
+    writeFileSync(join(dir, 'f.txt'), 'secret');
+    const { seen, transport } = capture();
     const mail = new MailTs({ transport });
-    await mail.send({ from: 'a@x.com', to: 'b@x.com', text: 'x', attachments: [{ filename: 'f', path: join(dir, 'f.txt') }] });
-    await mail.send({ from: 'a@x.com', to: 'b@x.com', text: 'x', attachments: [{ filename: 'f', path: join(dir, 'f.txt') }] });
-    const calls = warn.mock.calls.filter(c => String(c[0]).includes('attachmentPolicy'));
-    // The module-level flag may already be set by earlier tests in the same worker — at most once
-    expect(calls.length).toBeLessThanOrEqual(1);
+    const r = await mail.send({ from: 'a@x.com', to: 'b@x.com', text: 'x', attachments: [{ filename: 'f', path: join(dir, 'f.txt') }] });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.message).toMatch(/disabled by default/);
+    expect(seen).toHaveLength(0);
+    await expect(buildMessage({ from: 'a@x.com', to: 'b@x.com', text: 'x', attachments: [{ filename: 'f', path: join(dir, 'f.txt') }] }))
+      .rejects.toThrow(/attachmentPolicy/);
 
-    warn.mockClear();
     const explicit = new MailTs({ transport, attachmentPolicy: 'allow' });
-    await explicit.send({ from: 'a@x.com', to: 'b@x.com', text: 'x', attachments: [{ filename: 'f', path: join(dir, 'f.txt') }] });
-    expect(warn.mock.calls.filter(c => String(c[0]).includes('attachmentPolicy'))).toHaveLength(0);
+    expect((await explicit.send({ from: 'a@x.com', to: 'b@x.com', text: 'x', attachments: [{ filename: 'f', path: join(dir, 'f.txt') }] })).ok).toBe(true);
+    expect((seen[0]!.attachments![0]!.content as Buffer).toString()).toBe('secret');
   });
 
   it('HTTP transports receive file content resolved under { root } (regression)', async () => {

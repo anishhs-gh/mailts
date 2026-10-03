@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import * as net from 'net';
+import { mkdtempSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { ImapSession } from '../../../src/imap/ImapSession.js';
 import { MailTs } from '../../../src/core/MailTs.js';
 import type { ImapConfig } from '../../../src/types/imap.js';
@@ -87,6 +90,22 @@ describe('ImapSession features', () => {
       expect(res.messageId).toMatch(/^<.+@x\.com>$/);
       expect(log.some(l => /APPEND "Drafts" \(\\Draft\) \{\d+\}/.test(l))).toBe(true);
       await s.close();
+    });
+  });
+
+  it('appendMessage applies attachmentPolicy: rejected by default, allowed via MailTs { root }', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mailts-append-'));
+    writeFileSync(join(dir, 'a.txt'), 'hello');
+    const msg = { from: 'u@x.com', to: 'b@x.com', text: 'x', attachments: [{ filename: 'a.txt', path: 'a.txt' }] };
+    await withImap(() => false, async (cfg, log) => {
+      const plain = new ImapSession(cfg);
+      await expect(plain.appendMessage('Drafts', msg)).rejects.toThrow(/attachmentPolicy/);
+      expect(log.some(l => / APPEND /.test(l))).toBe(false);
+      await plain.close();
+
+      const session = new MailTs({ imap: cfg, attachmentPolicy: { root: dir } }).imap;
+      await expect(session.appendMessage('Drafts', msg)).resolves.toMatchObject({ uid: 42 });
+      await session.close();
     });
   });
 

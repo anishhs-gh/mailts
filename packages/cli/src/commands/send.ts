@@ -32,7 +32,8 @@ export async function sendEmail(args: SendArgs): Promise<void> {
     return;
   }
 
-  const mail = new MailTs({ smtp: smtpConfig, logger: { level: 'info', format: 'pretty' } });
+  // --attachments names local files the user chose, so reading paths is intended here.
+  const mail = new MailTs({ smtp: smtpConfig, attachmentPolicy: 'allow', logger: { level: 'info', format: 'pretty' } });
 
   if (args.alias) {
     const aliases = (globalCfg['aliases'] as Record<string, unknown> | undefined) ?? {};

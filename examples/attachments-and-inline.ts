@@ -12,6 +12,9 @@ const mail = new MailTs({
     port: 587,
     auth: { type: 'plain', user: 'you@gmail.com', pass: process.env['SMTP_PASS']! },
   },
+  // `path` attachments are rejected unless a policy allows them. This script is trusted
+  // code reading its own files; for user input use { root: '/srv/uploads' } or pass `content`.
+  attachmentPolicy: 'allow',
 });
 
 // ── 1. File attachments ───────────────────────────────────────────────────────

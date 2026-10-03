@@ -10,6 +10,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) · Versioning: 
 - Aligned with `@mailts/core` 0.5: peers `@mailts/core` `>=0.5.0 <2.0.0` and `@mailts/trap` `>=1.1.0 <2.0.0`.
 
 ### Fixed
+- `send --attachments` keeps reading the named files with `@mailts/core` 0.5, which rejects `path` attachments unless `attachmentPolicy` allows them.
 - `mailts send` always shuts the client down (also on the alias path and on errors), so the process exits instead of holding SMTP connections.
 
 ### Added

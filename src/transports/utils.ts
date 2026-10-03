@@ -95,7 +95,11 @@ export interface ResolvedApiAttachment {
   data: Buffer;
 }
 
-/** Resolve all attachments to in-memory Buffers for use in HTTP API payloads. */
+/**
+ * Resolve all attachments to in-memory Buffers for use in HTTP API payloads.
+ * `MailTs` resolves `path` attachments under its policy before calling a transport;
+ * a transport used directly rejects them (default policy).
+ */
 export async function resolveApiAttachments(
   attachments: Attachment[],
 ): Promise<ResolvedApiAttachment[]> {

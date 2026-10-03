@@ -120,6 +120,8 @@ export { buildICalString } from './core/ICal.js';
 // IMAP
 export { ImapClient } from './imap/ImapClient.js';
 export { ImapSession } from './imap/ImapSession.js';
+export { ImapPool } from './imap/ImapPool.js';
+export type { ImapPoolOptions, ImapPoolStats, ImapConfigSource } from './imap/ImapPool.js';
 export { MailboxWatcher } from './imap/MailboxWatcher.js';
 export type { ImapLimits } from './imap/ImapParser.js';
 export type { WatchOptions } from './imap/MailboxWatcher.js';

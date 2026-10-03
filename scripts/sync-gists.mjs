@@ -145,6 +145,20 @@ const META = {
     run:         'npx tsx queue-persistence.ts enqueue && npx tsx queue-persistence.ts deliver',
     features:    ['Jobs survive crashes, delivered once', 'Multi-process leases', 'shutdown() keeps unsent mail', 'Buffer attachments persisted'],
   },
+  'imap-pool.ts': {
+    description: '@mailts/core — reuse IMAP connections per account in multi-tenant servers | typescript imap connection pool',
+    title:       'IMAP connection pool for multi-tenant servers',
+    install:     'npm install @mailts/core',
+    run:         'IMAP_USER=you@gmail.com IMAP_PASS=<app password> npx tsx imap-pool.ts',
+    features:    ['One authenticated session per account', 'Exclusive lease per request', 'Idle timeout and LRU eviction', 'close(account) on sign-out'],
+  },
+  'queue-driver-postgres.ts': {
+    description: '@mailts/core — durable email queue shared by many instances on Postgres (Cloud Run, Kubernetes) | typescript email queue postgres',
+    title:       'Multi-instance email queue on Postgres',
+    install:     'npm install @mailts/core pg',
+    run:         'DATABASE_URL=postgres://… SMTP_HOST=… SMTP_USER=… SMTP_PASS=… npx tsx queue-driver-postgres.ts',
+    features:    ['FOR UPDATE SKIP LOCKED — one instance per job', 'Leases recover jobs from crashed instances', 'Idempotency keys across instances', 'Graceful SIGTERM shutdown'],
+  },
   'oauth-app-only.ts': {
     description: '@mailts/core — organisation-wide mailbox access: Google service account + Microsoft client credentials | typescript email oauth2 workspace',
     title:       'App-only OAuth — Google Workspace / Microsoft 365 without user sign-in',
